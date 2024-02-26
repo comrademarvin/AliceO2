@@ -7,6 +7,7 @@
 #include "MCHGlobalMapping/Mapper.h"
 #include "MCHGlobalMapping/DsIndex.h"
 #include "MCHGlobalMapping/ChannelCode.h"
+#include "MCHConditions/DCSAliases.h"
 #include <iostream>
 #include <map>
 #include <string>
@@ -24,6 +25,7 @@
 using DPID = o2::dcs::DataPointIdentifier;
 using DPVAL = o2::dcs::DataPointValue;
 using DPMAP = std::unordered_map<DPID, std::vector<DPVAL>>;
+using DPMAP2 = std::map<std::string, std::map<uint64_t, double>>;
 using RBMAP = std::map<int, std::pair<uint64_t, uint64_t>>;
 using HVBMAP = std::map<uint64_t, uint64_t>;
 
@@ -35,7 +37,7 @@ std::string GetTime(uint64_t ts);
 uint64_t MSToS(uint64_t ts);
 HVBMAP GetHVBoundaries(o2::ccdb::CcdbApi const& api, uint64_t tStart, uint64_t tStop);
 void PrintHVBoundaries(const HVBMAP& hvBoundaries);
-
+void PrintDataPoints(const DPMAP2 dpsMapsPerCh[10], bool all);
 
 int main() {
     //TGraph* HV_entries = new TGraph();
@@ -67,19 +69,34 @@ int main() {
     auto hvBoundaries = GetHVBoundaries(api, runBoundaries.begin()->second.first, runBoundaries.rbegin()->second.second);
     PrintHVBoundaries(hvBoundaries);
 
-    /*
+
     // fetch HV object in timestamp range
+    DPMAP2 dpsMapsPerCh[10];
     std::map<std::string, std::string> metadata;
 
-    for (auto runs : runBoundaries) {
+    for (auto boundaries : hvBoundaries) {
+      auto* HV_map = api.retrieveFromTFileAny<DPMAP>("MCH/Calib/HV", metadata, boundaries.first);
 
+      for (auto& entry : *HV_map) {
+        std::string entry_alias = (entry.first).get_alias();
+
+        if (entry_alias.find("vMon") != std::string::npos) { // only for voltage channels
+          auto entry_values = entry.second;
+          Int_t entries_size = entry_values.size();
+          int chamber = o2::mch::dcs::toInt(o2::mch::dcs::aliasToChamber(entry_alias));
+
+          auto& dps2 = dpsMapsPerCh[chamber][entry_alias];
+          for (const auto& value : entry_values) {
+            double HV_value = sum(0.0, value);
+            dps2.emplace(value.get_epoch_time(), HV_value);
+          }
+        }
+      }
     }
 
-    uint64_t timestamp = 1698299830000;
-    auto* HV_map = api.retrieveFromTFileAny<DPMAP>("MCH/Calib/HV", metadata, timestamp);
+    PrintDataPoints(dpsMapsPerCh, true);
 
-    std::cout << "size of map = " << HV_map->size() << std::endl;
-
+    /*
     auto outFile = new TFile("HVLV_ouput.root", "RECREATE");
 
     // as a naive start, use a HV threshold
@@ -276,4 +293,38 @@ void PrintHVBoundaries(const HVBMAP& hvBoundaries)
   }
 
   printf("------------------------------------\n");
+}
+
+void PrintDataPoints(const DPMAP2 dpsMapsPerCh[10], bool all)
+{
+  /// print all the registered data points
+
+  for (int ch = 0; ch < 10; ++ch) {
+
+    printf("\n------------ chamber %d ------------\n", ch + 1);
+
+    for (const auto& [alias, dps] : dpsMapsPerCh[ch]) {
+
+      printf("- %s: %lu values", alias.c_str(), dps.size());
+
+      if (all) {
+
+        printf("\n");
+        for (const auto& [ts, hv] : dps) {
+          printf("  %lld (%s): %7.2f V\n", ts, GetTime(ts).c_str(), hv);
+        }
+
+      } else if (!dps.empty()) {
+
+        const auto firstdt = dps.begin();
+        const auto lastdt = dps.rbegin();
+        printf(": %lld (%s): %7.2f V -- %lld (%s): %7.2f V\n",
+               firstdt->first, GetTime(firstdt->first).c_str(), firstdt->second,
+               lastdt->first, GetTime(lastdt->first).c_str(), lastdt->second);
+
+      } else {
+        printf("\n");
+      }
+    }
+  }
 }
