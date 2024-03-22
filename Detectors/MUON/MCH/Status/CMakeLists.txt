@@ -14,15 +14,18 @@ o2_add_library(MCHStatus
           src/StatusMap.cxx
           src/StatusMapCreatorParam.cxx
           src/StatusMapCreatorSpec.cxx
+          src/HVStatusCreator.cxx
         PUBLIC_LINK_LIBRARIES
           fmt::fmt
           O2::DataFormatsMCH
-          O2::MCHGlobalMapping)
+          O2::MCHGlobalMapping
+          O2::DetectorsDCS)
 
 o2_target_root_dictionary(MCHStatus
                           HEADERS
                             include/MCHStatus/StatusMap.h
-                            include/MCHStatus/StatusMapCreatorParam.h)
+                            include/MCHStatus/StatusMapCreatorParam.h
+                            include/MCHStatus/HVStatusCreator.h)
 
 o2_add_executable(
   statusmap-creator-workflow

@@ -15,19 +15,31 @@
 #include <numeric>
 #include <vector>
 #include <set>
+#include <tuple>
 #include <fstream>
 #include <sstream>
 #include "TGraph.h"
 #include "TFile.h"
 #include "TCanvas.h"
 #include "TAxis.h"
+#include "TH1F.h"
+#include "TLine.h"
+#include "TMultiGraph.h"
+#include "TStyle.h"
 
 using DPID = o2::dcs::DataPointIdentifier;
 using DPVAL = o2::dcs::DataPointValue;
 using DPMAP = std::unordered_map<DPID, std::vector<DPVAL>>;
-using DPMAP2 = std::map<std::string, std::map<uint64_t, double>>;
+using HVVALUES = std::map<uint64_t, double>;
+using DPMAP2 = std::map<std::string, HVVALUES>;
 using RBMAP = std::map<int, std::pair<uint64_t, uint64_t>>;
 using HVBMAP = std::map<uint64_t, uint64_t>;
+using BADHVLIST = std::vector<std::tuple<uint64_t, uint64_t, double, double, uint32_t, std::string>>;
+using BADHVMAP = std::map<std::string, BADHVLIST>;
+
+double yRange[2] = {-1., 1700.};
+double hvLimits[10] = {1550., 1550., 1590., 1590., 1590., 1590., 1590., 1590., 1590., 1590.};
+uint64_t minDuration = 3000; // Tune this for fluctuations
 
 float sum(float s, o2::dcs::DataPointValue v);
 std::set<int> GetRuns(std::string runList);
@@ -35,9 +47,18 @@ RBMAP GetRunBoundaries(o2::ccdb::CcdbApi const& api, std::string runList);
 void PrintRunBoundaries(const RBMAP& runBoundaries);
 std::string GetTime(uint64_t ts);
 uint64_t MSToS(uint64_t ts);
+std::string GetDE(std::string alias);
 HVBMAP GetHVBoundaries(o2::ccdb::CcdbApi const& api, uint64_t tStart, uint64_t tStop);
+void SelectHVBoundaries(HVBMAP& hvBoundaries, const RBMAP& runBoundaries);
 void PrintHVBoundaries(const HVBMAP& hvBoundaries);
 void PrintDataPoints(const DPMAP2 dpsMapsPerCh[10], bool all);
+void SelectDataPoints(DPMAP2 dpsMapsPerCh[10], uint64_t tStart, uint64_t tStop);
+TGraph* MapToGraph(std::string alias, const std::map<uint64_t, double>& dps);
+TCanvas* DrawDataPoints(TMultiGraph* mg);
+void DrawRunBoudaries(const RBMAP& runBoundaries, TCanvas* c);
+void FindHVIssues(const HVVALUES& HV_values, double hvLimit, BADHVLIST& hvIssuesList);
+void SelectHVIssues(BADHVMAP& hvIssuesList, const RBMAP& runBoundaries, uint64_t minDuration);
+void PrintHVIssues(const BADHVMAP hvIssuesPerCh[10]);
 
 int main() {
     //TGraph* HV_entries = new TGraph();
@@ -67,16 +88,18 @@ int main() {
 
     // extract the timestamp boundaries for each HV file in the full time range
     auto hvBoundaries = GetHVBoundaries(api, runBoundaries.begin()->second.first, runBoundaries.rbegin()->second.second);
+
+    // Case of iterating through one HV object at a time and spot HV issue
+    SelectHVBoundaries(hvBoundaries, runBoundaries);
     PrintHVBoundaries(hvBoundaries);
 
-
-    // fetch HV object in timestamp range
-    DPMAP2 dpsMapsPerCh[10];
     std::map<std::string, std::string> metadata;
 
     for (auto boundaries : hvBoundaries) {
       auto* HV_map = api.retrieveFromTFileAny<DPMAP>("MCH/Calib/HV", metadata, boundaries.first);
+      DPMAP2 dpsMapsPerCh[10];
 
+      // Fill HV values for single object
       for (auto& entry : *HV_map) {
         std::string entry_alias = (entry.first).get_alias();
 
@@ -91,80 +114,214 @@ int main() {
             dps2.emplace(value.get_epoch_time(), HV_value);
           }
         }
-      }
-    }
+      };
 
-    PrintDataPoints(dpsMapsPerCh, true);
+      SelectDataPoints(dpsMapsPerCh, boundaries.first, boundaries.second);
 
-    /*
-    auto outFile = new TFile("HVLV_ouput.root", "RECREATE");
+      // printf("%lld - %lld (%s - %s)\n", boundaries.first, boundaries.second, GetTime(boundaries.first).c_str(), GetTime(boundaries.second).c_str());
+      // PrintDataPoints(dpsMapsPerCh, true);
+      // std::cout << std::endl;
 
-    // as a naive start, use a HV threshold
-    double HV_threshold = 1000.0;
+      // // Find HV Issues in one object
+      BADHVMAP hvIssuesPerCh[10];
 
-    for (auto& entry : *HV_map) {
-        std::string entry_alias = (entry.first).get_alias();
-
-        if (entry_alias.find("vMon") != std::string::npos) { // only for voltage channels
-            auto entry_values = entry.second;
-            Int_t entries_size = entry_values.size();
-            bool HV_threshold_trigger = false;
-
-            if (entries_size > 1) {
-                // std::cout << "Key: " << entry_alias;
-                // std::cout << " |-| Values: ";
-                int entry_count = 0;
-                Int_t voltage_array[entries_size];
-                Int_t timestamp_array[entries_size];
-
-                for (auto value : entry_values) {
-                    double HV_entry_value = sum(0.0, value);
-                    // HV entry below threshold
-                    if (HV_entry_value < HV_threshold) {
-                        HV_threshold_trigger = true;
-                    }
-
-                    //std::cout << (Int_t)(value.get_epoch_time()*(0.001)) << std::endl;
-                    timestamp_array[entry_count] = (Int_t)(value.get_epoch_time()*(0.001));
-                    voltage_array[entry_count] = (Int_t)(HV_entry_value);
-                    entry_count++;
-                    //std::cout << sum(0.0, value) << " (" << entry_timestamp << ");";
-                }
-
-                auto canvasHV = new TCanvas("HV_timestamps","HV_timestamps");
-                auto HV_entries = new TGraph(entries_size, timestamp_array, voltage_array);
-                const std::string title_axis = entry_alias + ";Timestamp (s);High-Voltage (V)";
-                HV_entries->SetTitle(title_axis.c_str());
-                // HV_entries->GetXaxis()->SetTimeDisplay(1);
-                // HV_entries->GetXaxis()->SetTimeFormat("%d/%m %H:%M");
-                // HV_entries->GetXaxis()->SetTimeOffset(0,"gmt");
-                // HV_entries->GetXaxis()->SetNdivisions(505);
-                HV_entries->Draw("AL*");
-
-                canvasHV->Write();
-
-                // auto mean = std::accumulate(entry_values.begin(), entry_values.end(), 0.0, sum);
-                // if (entry_values.size()) {
-                //     mean /= entry_values.size();
-                // }
-                // std::cout << " |-| Mean: " << mean << std::endl;
-            }
-
-            if (HV_threshold_trigger) { // flagged as bad channel
-                std::cout << "Alias of channel: " << entry_alias << std::endl;
-                std::set<int> channel_DsIndices = o2::mch::dcs::aliasToDsIndices("MchHvLvRight/Chamber00Right/Quad0Sect0.actual.vMon");
-                std::cout << "Made it out!" << std::endl;
-                //std::cout << "Number of channel DS indices: " << channel_DsIndices << std::endl;
-            }
+      for (int ch = 0; ch < 10; ++ch) {
+        // iterate through each alias of the channel
+        for (const auto& [alias, HV_values] : dpsMapsPerCh[ch]) {
+          FindHVIssues(HV_values, hvLimits[ch], hvIssuesPerCh[ch][alias]);
         }
-    }
+        SelectHVIssues(hvIssuesPerCh[ch], runBoundaries, minDuration); // do a selection without run boundaries
+      }
 
-    delete outFile; */
+      printf(" Issues of: !! %lld !! - %lld (%s - %s)\n", boundaries.first, boundaries.second, GetTime(boundaries.first).c_str(), GetTime(boundaries.second).c_str());
+      PrintHVIssues(hvIssuesPerCh);
+      std::cout << std::endl;
+
+      // Plotting
+      auto outFile = new TFile(fmt::format("Plots/HVLV_ouput_{}.root", boundaries.first).c_str(), "RECREATE");
+
+      TMultiGraph* mg[10];
+      for (int ch = 0; ch < 10; ++ch) {
+        mg[ch] = new TMultiGraph;
+        mg[ch]->SetNameTitle(fmt::format("ch{}", ch).c_str(), fmt::format("chamber {};time;HV (V)", ch + 1).c_str());
+        for (const auto& [alias, dps] : dpsMapsPerCh[ch]) {
+          mg[ch]->Add(MapToGraph(alias, dps), "lp");
+        }
+      }
+
+      // Draw canvas for each channel
+      for (int ch = 0; ch < 10; ++ch) {
+        TCanvas* c = DrawDataPoints(mg[ch]);
+        //DrawRunBoudaries(runBoundaries, c);
+        c->Write();
+      }
+
+      delete outFile;
+    };
+    
+    return 0;
+
+    // // Case of iterating through all HV points continuously to spot issues
+
+    // // fetch HV object in timestamp range
+    // DPMAP2 dpsMapsPerCh[10];
+    // std::map<std::string, std::string> metadata;
+
+    // for (auto boundaries : hvBoundaries) {
+    //   auto* HV_map = api.retrieveFromTFileAny<DPMAP>("MCH/Calib/HV", metadata, boundaries.first);
+
+    //   for (auto& entry : *HV_map) {
+    //     std::string entry_alias = (entry.first).get_alias();
+
+    //     if (entry_alias.find("vMon") != std::string::npos) { // only for voltage channels
+    //       auto entry_values = entry.second;
+    //       Int_t entries_size = entry_values.size();
+    //       int chamber = o2::mch::dcs::toInt(o2::mch::dcs::aliasToChamber(entry_alias));
+
+    //       auto& dps2 = dpsMapsPerCh[chamber][entry_alias];
+    //       for (const auto& value : entry_values) {
+    //         double HV_value = sum(0.0, value);
+    //         dps2.emplace(value.get_epoch_time(), HV_value);
+    //       }
+    //     }
+    //   }
+    // }
+
+    // //PrintDataPoints(dpsMapsPerCh, true);
+
+    // SelectDataPoints(dpsMapsPerCh, runBoundaries.begin()->second.first, runBoundaries.rbegin()->second.second);
+    // //PrintDataPoints(dpsMapsPerCh, true);
+
+    // // Look for HV issues for each channel
+    // BADHVMAP hvIssuesPerCh[10];
+    
+    // for (int ch = 0; ch < 10; ++ch) {
+    //   // iterate through each alias of the channel
+    //   for (const auto& [alias, HV_values] : dpsMapsPerCh[ch]) {
+    //     FindHVIssues(HV_values, hvLimits[ch], hvIssuesPerCh[ch][alias]); // How does it know alias entries already? Need to initialize?
+    //   }
+    //   SelectHVIssues(hvIssuesPerCh[ch], runBoundaries, 2);
+    // }
+
+    // PrintHVIssues(hvIssuesPerCh);
+
+    // // Plotting
+    // auto outFile = new TFile("HVLV_ouput.root", "RECREATE");
+
+    // TMultiGraph* mg[10];
+    // for (int ch = 0; ch < 10; ++ch) {
+    //   mg[ch] = new TMultiGraph;
+    //   mg[ch]->SetNameTitle(fmt::format("ch{}", ch).c_str(), fmt::format("chamber {};time;HV (V)", ch + 1).c_str());
+    //   for (const auto& [alias, dps] : dpsMapsPerCh[ch]) {
+    //     mg[ch]->Add(MapToGraph(alias, dps), "lp");
+    //   }
+    // }
+
+    // // Draw canvas for each channel
+    // for (int ch = 0; ch < 10; ++ch) {
+    //   TCanvas* c = DrawDataPoints(mg[ch]);
+    //   DrawRunBoudaries(runBoundaries, c);
+    //   c->Write();
+    // }
+
+    // delete outFile;
     
     return 0;
 }
 
-float sum(float s, o2::dcs::DataPointValue v)
+void FindHVIssues(const HVVALUES& HV_values, double hvLimit, BADHVLIST& hvIssuesList) 
+{
+  uint64_t start_stamp = 0;
+  uint64_t end_stamp = 0;
+  bool ongoing_issue = false;
+  double hv_mean = 0.0;
+  double hv_min = 0.0;
+  uint32_t hv_count = 0;
+  uint64_t boundaryExtension = 10000;
+  bool isFirst = true;
+
+  for (auto& [timestamp, HV_value] : HV_values) {
+    if (HV_value < hvLimit) {
+      if (!ongoing_issue) {
+        start_stamp = timestamp;
+        // if it is the first point in the object, extend it backwards in time?
+        if (isFirst) {
+          start_stamp = start_stamp - boundaryExtension;
+        }
+        end_stamp = start_stamp;
+        hv_mean = HV_value;
+        hv_min = HV_value;
+        hv_count = 1;
+        ongoing_issue = true;
+      } else {
+        end_stamp = timestamp;
+        hv_mean += HV_value;
+        if (HV_value < hv_min) {
+          hv_min = HV_value;
+        }
+        hv_count += 1;
+      }
+    } else {
+      if (ongoing_issue) {
+        end_stamp = timestamp;
+        hv_mean = hv_mean/hv_count;
+        // Possibly do the min duration selection here?
+        hvIssuesList.emplace_back(start_stamp, end_stamp, hv_mean, hv_min, hv_count, "");
+        ongoing_issue = false;
+        hv_mean = 0.0;
+        hv_min = 0.0;
+        hv_count = 0;
+      }
+    }
+    isFirst = false;
+  };
+
+  // The issue is still ongoing at the end of the object boundary, extend it forwards in time?
+  if (ongoing_issue && (start_stamp != end_stamp)) {
+    hv_mean = hv_mean/hv_count;
+    end_stamp = end_stamp + boundaryExtension;
+    hvIssuesList.emplace_back(start_stamp, end_stamp, hv_mean, hv_min, hv_count, "");
+  };
+};
+
+void SelectHVIssues(BADHVMAP& hvIssuesList, const RBMAP& runBoundaries, uint64_t minDuration) 
+{
+  // itterate through all identified HV issues to select only those within a run range 
+  for (auto& hvIssues: hvIssuesList) {
+    if (!hvIssues.second.empty()) {
+      for (auto itIssue = hvIssues.second.begin(); itIssue != hvIssues.second.end();) {
+        auto tStart = std::get<0>(*itIssue);
+        auto tStop = std::get<1>(*itIssue);
+
+        if ((tStop - tStart) < minDuration) {
+          itIssue = hvIssues.second.erase(itIssue);
+        } else {
+          // itterate through run boundaries
+          bool inRunRange = false;
+          std::string runs = "";
+          for (const auto& [run, boundaries] : runBoundaries) {
+            if (tStart >= boundaries.second) {
+              continue;
+            } else if (tStop <= boundaries.first) {
+              break;
+            }
+            inRunRange = true;
+            runs += fmt::format("{},", run);
+          }
+
+          if (!inRunRange) {
+            itIssue = hvIssues.second.erase(itIssue);
+          } else {
+            std::get<5>(*itIssue) = runs;
+            ++itIssue;
+          }
+        }
+      }
+    }
+  }
+}
+
+float sum(float s, o2::dcs::DataPointValue v) 
 {
     union Converter {
         uint64_t raw_data;
@@ -281,6 +438,30 @@ HVBMAP GetHVBoundaries(o2::ccdb::CcdbApi const& api, uint64_t tStart, uint64_t t
   return hvBoundaries;
 }
 
+void SelectHVBoundaries(HVBMAP& hvBoundaries, const RBMAP& runBoundaries) 
+{
+  // Only select HV objects that fall within a run range
+  for (auto itBound = hvBoundaries.begin(), itNext = itBound; itBound != hvBoundaries.end(); itBound = itNext) {
+    auto tStart = itBound->first;
+    auto tStop = itBound->second;
+    bool inRunRange = false;
+
+    for (const auto& [run, boundaries] : runBoundaries) {
+      if (tStart >= boundaries.second) {
+        continue;
+      } else if (tStop <= boundaries.first) {
+        break;
+      }
+      inRunRange = true;
+    }
+
+    ++itNext;
+    if (!inRunRange) {
+      hvBoundaries.erase(itBound);
+    }
+  }
+}
+
 void PrintHVBoundaries(const HVBMAP& hvBoundaries)
 {
   /// print the time boundaries of every HV files found in the full time range
@@ -324,6 +505,135 @@ void PrintDataPoints(const DPMAP2 dpsMapsPerCh[10], bool all)
 
       } else {
         printf("\n");
+      }
+    }
+  }
+}
+
+void SelectDataPoints(DPMAP2 dpsMapsPerCh[10], uint64_t tStart, uint64_t tStop)
+{
+  /// remove the data points outside of the given time range and, if needed,
+  /// add a data point at the boundaries with HV equal to the preceding value
+
+  for (int ch = 0; ch < 10; ++ch) {
+    for (auto& [alias, dps] : dpsMapsPerCh[ch]) {
+
+      // get the first data point in the time range, remove the previous ones
+      // and add a data point with HV equal to the preceding value if needed
+      auto itFirst = dps.lower_bound(tStart);
+      if (itFirst != dps.begin()) {
+        double previousHV = std::prev(itFirst)->second;
+        for (auto it = dps.begin(); it != itFirst;) {
+          it = dps.erase(it);
+        }
+        dps.emplace(tStart, previousHV);
+      } else if (itFirst->first != tStart) {
+        printf("error (%s) at object (%lld): first data point is after the start of the time range\n", alias.c_str(), tStart);
+        // The first point is after start of object - don't know what was before.
+      }
+
+      // get the first data point exceeding the time range, remove it and the next ones
+      // and add a data point with HV equal to the preceding value if needed
+      auto itLast = dps.upper_bound(tStop);
+      if (itLast != dps.begin()) {
+        double previousHV = std::prev(itLast)->second;
+        for (auto it = itLast; it != dps.end();) {
+          it = dps.erase(it);
+        }
+        dps.emplace(tStop, previousHV);
+      } else {
+        printf("error (%s) at object (%lld): all data points are after the end of the time range\n", alias.c_str());
+        //dps.clear();
+      }
+    }
+  }
+}
+
+TGraph* MapToGraph(std::string alias, const std::map<uint64_t, double>& dps)
+{
+  /// create a graph for the DCS channel and add the data points
+
+  TGraph* g = new TGraph(dps.size());
+
+  auto shortAlias = alias.substr(0, alias.size() - 12);
+  auto title = fmt::format("{} ({})", GetDE(alias).c_str(), shortAlias.c_str());
+  g->SetNameTitle(alias.c_str(), title.c_str());
+
+  int i(0);
+  for (auto [ts, hv] : dps) {
+    g->SetPoint(i, MSToS(ts), hv);
+    ++i;
+  }
+
+  g->SetMarkerSize(1.5);
+  g->SetMarkerStyle(2);
+  g->SetLineStyle(2);
+
+  return g;
+}
+
+TCanvas* DrawDataPoints(TMultiGraph* mg)
+{
+  /// display the data points of the given chamber
+
+  TCanvas* c = new TCanvas(mg->GetName(), mg->GetHistogram()->GetTitle(), 1500, 900);
+
+  mg->Draw("A plc pmc");
+  mg->SetMinimum(yRange[0]);
+  mg->SetMaximum(yRange[1]);
+  mg->GetXaxis()->SetTimeDisplay(1);
+  mg->GetXaxis()->SetTimeFormat("%d/%m %H:%M");
+  mg->GetXaxis()->SetTimeOffset(0, "local");
+  mg->GetXaxis()->SetNdivisions(21010);
+
+  c->BuildLegend();
+  c->Update();
+
+  return c;
+}
+
+std::string GetDE(std::string alias)
+{
+  /// get the DE (and sector) corresponding to the DCS alias
+
+  auto de = o2::mch::dcs::aliasToDetElemId(alias);
+
+  return (o2::mch::dcs::isQuadrant(o2::mch::dcs::aliasToChamber(alias)))
+           ? fmt::format("DE{}-{}", *de, o2::mch::dcs::aliasToNumber(alias) % 10)
+           : fmt::format("DE{}", *de);
+}
+
+void DrawRunBoudaries(const RBMAP& runBoundaries, TCanvas* c)
+{
+  /// draw the run time boundaries
+
+  c->cd();
+
+  for (const auto& [run, boundaries] : runBoundaries) {
+
+    TLine* startRunLine = new TLine(MSToS(boundaries.first), yRange[0], MSToS(boundaries.first), yRange[1]);
+    startRunLine->SetUniqueID(run);
+    startRunLine->SetLineColor(4);
+    startRunLine->SetLineWidth(1);
+    startRunLine->Draw();
+
+    TLine* endRunLine = new TLine(MSToS(boundaries.second), yRange[0], MSToS(boundaries.second), yRange[1]);
+    endRunLine->SetUniqueID(run);
+    endRunLine->SetLineColor(2);
+    endRunLine->SetLineWidth(1);
+    endRunLine->Draw();
+  }
+}
+
+void PrintHVIssues(const BADHVMAP hvIssuesPerCh[10])
+{
+  for (int ch = 0; ch < 10; ++ch) {
+    for (const auto& [alias, hv_issues]: hvIssuesPerCh[ch]) {
+      if (!hv_issues.empty()) {
+        printf("==== Chamber: %d; Alias: %s \n", (ch+1), alias.c_str());
+        for (const auto& [start, stop, mean, min, count, runs] : hv_issues) {
+          printf("Start: %s; End: %s; Mean: %f; Min: %f; Count: %d; Runs: %s \n", GetTime(start).c_str(), GetTime(stop).c_str(), mean, min, count, (runs).c_str());
+        }
       }
     }
   }
