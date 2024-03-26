@@ -11,7 +11,7 @@
 
 #include <algorithm>
 
-#include "HVStatusCreator.h"
+#include "MCHStatus/HVStatusCreator.h"
 
 #include "MCHConditions/DetectionElement.h"
 #include "MCHGlobalMapping/Mapper.h"
