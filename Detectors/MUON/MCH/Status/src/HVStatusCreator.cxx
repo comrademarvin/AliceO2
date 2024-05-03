@@ -20,7 +20,7 @@ float sum(float s, o2::dcs::DataPointValue v);
 
 // HV Issue finder parameters
 const double hvLimits[10] = {1550., 1550., 1590., 1590., 1590., 1590., 1590., 1590., 1590., 1590.};
-const uint64_t minDuration = 3000; // Tune this for fluctuations?
+const uint64_t minDuration = 0; // Tune this for fluctuations?
 
 namespace o2::mch
 {

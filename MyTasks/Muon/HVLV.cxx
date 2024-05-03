@@ -40,8 +40,8 @@ using BADHVMAP = std::map<std::string, BADHVLIST>;
 
 double yRange[2] = {-1., 1700.};
 double hvLimits[10] = {1550., 1550., 1590., 1590., 1590., 1590., 1590., 1590., 1590., 1590.};
-uint64_t minDuration = 3000; // Tune this for fluctuations
-string exlcudeAlias[1] = {"MchHvLvLeft/Chamber01Left/Quad2Sect2.actual.vMon"};
+uint64_t minDuration = 0; // Tune this for fluctuations
+string exlcudeAlias[1] = {"MchHvLvLeft/Chamber01Left/Quad2Sect2.actual.vMon"}; // MchHvLvLeft/Chamber01Left/Quad2Sect2.actual.vMon
 
 float sum(float s, o2::dcs::DataPointValue v);
 std::set<int> GetRuns(std::string runList);
@@ -61,10 +61,11 @@ void DrawRunBoudaries(const RBMAP& runBoundaries, TCanvas* c);
 void FindHVIssues(const HVVALUES& HV_values, double hvLimit, BADHVLIST& hvIssuesList);
 void SelectHVIssues(BADHVMAP& hvIssuesList, const RBMAP& runBoundaries, uint64_t minDuration);
 void PrintHVIssues(const BADHVMAP hvIssuesPerCh[10]);
-void FindHVIssuesMacro(o2::ccdb::CcdbApi const& api, HVBMAP& hvBoundaries, const RBMAP& runBoundaries, bool plotHVTimeline);
-void FindHVIssuesPerObjectMacro(o2::ccdb::CcdbApi const& api, HVBMAP& hvBoundaries, const RBMAP& runBoundaries, bool plotHVObjects);
-void FindHVIssuesWithClassMacro(o2::ccdb::CcdbApi const& api, HVBMAP& hvBoundaries, const RBMAP& runBoundaries);
-void SelectPrintHVIssuesFromClass(const o2::mch::HVStatusCreator::BADHVMAP& hvIssues, const RBMAP& runBoundaries);
+void PrintHVIssuesPerObj(const BADHVMAP hvIssuesPerCh[10]);
+void FindHVIssuesMacro(o2::ccdb::CcdbApi const& api, HVBMAP& hvBoundaries, const RBMAP& runBoundaries, bool plotHVTimeline, bool plotStats);
+void FindHVIssuesPerObjectMacro(o2::ccdb::CcdbApi const& api, HVBMAP& hvBoundaries, const RBMAP& runBoundaries, bool plotHVObjects, bool plotStats);
+void FindHVIssuesWithClassMacro(o2::ccdb::CcdbApi const& api, std::vector<DPMAP*> hvObjects, const RBMAP& runBoundaries, bool plotStats);
+void SelectPrintHVIssuesFromClass(const o2::mch::HVStatusCreator::BADHVMAP& hvIssues, const RBMAP& runBoundaries, TH1F* issueDurations);
 
 int main() {
     // read in runlist from textfile
@@ -93,34 +94,53 @@ int main() {
     // extract the timestamp boundaries for each HV file in the full time range
     auto hvBoundaries = GetHVBoundaries(api, runBoundaries.begin()->second.first, runBoundaries.rbegin()->second.second);
 
-    // Compare the macros from per object manual -> per object by class
     SelectHVBoundaries(hvBoundaries, runBoundaries);
     PrintHVBoundaries(hvBoundaries);
 
+    // read in HV objects for processing
+    int hvObjCount = hvBoundaries.size();
+    std::vector<DPMAP*> hvObjects(hvObjCount);
+    std::map<std::string, std::string> metadata;
+
+    int iObj = 0;
+    for (auto boundaries : hvBoundaries) {
+      auto* HV_map = api.retrieveFromTFileAny<DPMAP>("MCH/Calib/HV", metadata, boundaries.first);
+      hvObjects[iObj] = HV_map;
+      // for (auto& entry : hvObjects[iObj]) {
+      //   std::string entry_alias = (entry.first).get_alias();
+      //   std::cout << entry_alias << std::endl;
+      // }
+      iObj++;
+    };
+
+    // // Compare the macros from per object manual -> per object by class
     // std::cout << "\n==== Issues found from continuous MACRO ====\n";
-    // FindHVIssuesMacro(api, hvBoundaries, runBoundaries, true);
+    // FindHVIssuesMacro(api, hvBoundaries, runBoundaries, false, true);
     // std::cout << "============================================\n\n";
 
     // std::cout << "\n==== Issues found from per object MACRO ====\n";
-    // FindHVIssuesPerObjectMacro(api, hvBoundaries, runBoundaries, true);
+    // FindHVIssuesPerObjectMacro(api, hvBoundaries, runBoundaries, false, true);
     // std::cout << "============================================\n\n";
 
     std::cout << "\n==== Issues found from per object through CLASS ==== \n";
-    FindHVIssuesWithClassMacro(api, hvBoundaries, runBoundaries);
+    FindHVIssuesWithClassMacro(api, hvObjects, runBoundaries, true);
     std::cout << "====================================================\n\n";
     
     return 0;
 }
 
-void FindHVIssuesWithClassMacro(o2::ccdb::CcdbApi const& api, HVBMAP& hvBoundaries, const RBMAP& runBoundaries) {
+void FindHVIssuesWithClassMacro(o2::ccdb::CcdbApi const& api, std::vector<DPMAP*> hvObjects, const RBMAP& runBoundaries, bool plotStats) {
+  TH1F* issueDuration = new TH1F("issue_durations_class", "HV Issues Durations from per Obj through Class;Issue Duration (s);N", 60, 0, 60); // distribution of HV issues duration in seconds
+
   std::map<std::string, std::string> metadata;
 
-  for (auto boundaries : hvBoundaries) {
-    auto* HV_map = api.retrieveFromTFileAny<DPMAP>("MCH/Calib/HV", metadata, boundaries.first);
+  // for (auto boundaries : hvBoundaries) {
+  //   auto* HV_map = api.retrieveFromTFileAny<DPMAP>("MCH/Calib/HV", metadata, boundaries.first);
 
+  for (auto hvMap : hvObjects) {
     // Create HVStatusCreator object
     auto* HVStatusCreator = new o2::mch::HVStatusCreator();
-    HVStatusCreator->findAllIssues(*HV_map);
+    HVStatusCreator->findAllIssues(*hvMap);
 
     // remove issues that are not within a run range (to get rid of ramp up/down)
     auto hvIssues = HVStatusCreator->getHVIssuesList();
@@ -130,12 +150,22 @@ void FindHVIssuesWithClassMacro(o2::ccdb::CcdbApi const& api, HVBMAP& hvBoundari
     }
 
     //printf("Issues of HV Object: %lld - %lld\n", boundaries.first, boundaries.second);
-    SelectPrintHVIssuesFromClass(hvIssues, runBoundaries);
+    SelectPrintHVIssuesFromClass(hvIssues, runBoundaries, issueDuration);
   };
+
+  if (plotStats) {
+    auto outFile = new TFile("Plots/HV_issues_stats_class.root", "RECREATE");
+    TCanvas* durationCanvas = new TCanvas("issues_duration_class", "issues_duration_class");
+    issueDuration->Draw();
+    durationCanvas->Write();
+    delete outFile;
+  }
 };
 
-void FindHVIssuesPerObjectMacro(o2::ccdb::CcdbApi const& api, HVBMAP& hvBoundaries, const RBMAP& runBoundaries, bool plotHVObjects) {
+void FindHVIssuesPerObjectMacro(o2::ccdb::CcdbApi const& api, HVBMAP& hvBoundaries, const RBMAP& runBoundaries, bool plotHVObjects, bool plotStats) {
   // Case of iterating through one HV object at a time and spot HV issue
+  TH1F* issueDuration = new TH1F("issue_durations_object", "HV Issues Durations from per Obj;Issue Duration (s);N", 60, 0, 60); // distribution of HV issues duration in seconds
+
   std::map<std::string, std::string> metadata;
 
   for (auto boundaries : hvBoundaries) {
@@ -162,10 +192,6 @@ void FindHVIssuesPerObjectMacro(o2::ccdb::CcdbApi const& api, HVBMAP& hvBoundari
 
     SelectDataPoints(dpsMapsPerCh, boundaries.first, boundaries.second);
 
-    // printf("%lld - %lld (%s - %s)\n", boundaries.first, boundaries.second, GetTime(boundaries.first).c_str(), GetTime(boundaries.second).c_str());
-    // PrintDataPoints(dpsMapsPerCh, true);
-    // std::cout << std::endl;
-
     // // Find HV Issues in one object
     BADHVMAP hvIssuesPerCh[10];
 
@@ -177,9 +203,37 @@ void FindHVIssuesPerObjectMacro(o2::ccdb::CcdbApi const& api, HVBMAP& hvBoundari
       SelectHVIssues(hvIssuesPerCh[ch], runBoundaries, minDuration); // do a selection without run boundaries
     }
 
-    //printf("Issues of HV Object: %lld - %lld\n", boundaries.first, boundaries.second);
-    PrintHVIssues(hvIssuesPerCh);
-    //std::cout << std::endl;
+    PrintHVIssuesPerObj(hvIssuesPerCh);
+
+    // Process issues for stats
+    for (int ch = 0; ch < 10; ++ch) {
+      int aliasCount = 0;
+      for (const auto& [alias, hv_issues]: hvIssuesPerCh[ch]) {
+        if (!hv_issues.empty()) aliasCount++;
+      }
+
+      bool containsRamp = false;
+      if (aliasCount > 10) containsRamp = true;
+
+      for (const auto& [alias, hv_issues]: hvIssuesPerCh[ch]) {
+        string *aliasExcluded = std::find(std::begin(exlcudeAlias), std::end(exlcudeAlias), alias);
+        if (aliasExcluded != std::end(exlcudeAlias)) {
+          continue;
+        }
+
+        for (const auto& [start, stop, mean, min, count, runs] : hv_issues) {
+          if (containsRamp && ((stop-start)/1000 > 1800)) continue; // manual way to exclude ramp-up/ramp-down that pass run boundary check
+
+          float duration;
+          if ((stop-start)/1000 > 59) {
+            duration = 59.9;
+          } else {
+            duration = (stop-start)/1000;
+          }
+          issueDuration->Fill(duration);
+        }
+      }
+    }
 
     // Plotting
     if (plotHVObjects) {
@@ -204,9 +258,18 @@ void FindHVIssuesPerObjectMacro(o2::ccdb::CcdbApi const& api, HVBMAP& hvBoundari
       delete outFile;
     }
   };
+
+  if (plotStats) {
+    auto outFile = new TFile("Plots/HV_issues_stats_per_object.root", "RECREATE");
+    TCanvas* durationCanvas = new TCanvas("issues_duration_object", "issues_duration_object");
+    issueDuration->Draw();
+    durationCanvas->Write();
+    delete outFile;
+  }
+
 }
 
-void FindHVIssuesMacro(o2::ccdb::CcdbApi const& api, HVBMAP& hvBoundaries, const RBMAP& runBoundaries, bool plotHVTimeline) {
+void FindHVIssuesMacro(o2::ccdb::CcdbApi const& api, HVBMAP& hvBoundaries, const RBMAP& runBoundaries, bool plotHVTimeline, bool plotStats) {
   // Case of iterating through all HV points continuously to spot issues
 
   // fetch HV object in timestamp range
@@ -251,6 +314,35 @@ void FindHVIssuesMacro(o2::ccdb::CcdbApi const& api, HVBMAP& hvBoundaries, const
 
   PrintHVIssues(hvIssuesPerCh);
 
+  // Process issues for stats
+  TH1F* issueDuration = new TH1F("issue_durations_full", "HV Issues Durations from Full Timeline;Issue Duration (s);N", 60, 0, 60); // distribution of HV issues duration in seconds
+
+  for (int ch = 0; ch < 10; ++ch) {
+    // int aliasCount = 0;
+    // for (const auto& [alias, hv_issues]: hvIssuesPerCh[ch]) {
+    //   if (!hv_issues.empty()) aliasCount++;
+    // }
+
+    // if (aliasCount > 10) continue; // manual way to exclude ramp-up/ramp-down from printing
+
+    for (const auto& [alias, hv_issues]: hvIssuesPerCh[ch]) {
+      string *aliasExcluded = std::find(std::begin(exlcudeAlias), std::end(exlcudeAlias), alias);
+      if (aliasExcluded != std::end(exlcudeAlias)) {
+        continue;
+      }
+
+      for (const auto& [start, stop, mean, min, count, runs] : hv_issues) {
+        float duration;
+        if ((stop-start)/1000 > 59) {
+          duration = 59.9;
+        } else {
+          duration = (stop-start)/1000;
+        }
+        issueDuration->Fill(duration);
+      }
+    }
+  }
+
   // Plotting
   if (plotHVTimeline) {
     auto outFile = new TFile("Plots/HV_ouput_full.root", "RECREATE");
@@ -271,6 +363,14 @@ void FindHVIssuesMacro(o2::ccdb::CcdbApi const& api, HVBMAP& hvBoundaries, const
       c->Write();
     }
 
+    delete outFile;
+  }
+
+  if (plotStats) {
+    auto outFile = new TFile("Plots/HV_issues_stats_full_timeline.root", "RECREATE");
+    TCanvas* durationCanvas = new TCanvas("issues_duration_full", "issues_duration_full");
+    issueDuration->Draw();
+    durationCanvas->Write();
     delete outFile;
   }
 }
@@ -369,7 +469,10 @@ void SelectHVIssues(BADHVMAP& hvIssuesList, const RBMAP& runBoundaries, uint64_t
   }
 }
 
-void SelectPrintHVIssuesFromClass(const o2::mch::HVStatusCreator::BADHVMAP& hvIssues, const RBMAP& runBoundaries) {
+void SelectPrintHVIssuesFromClass(const o2::mch::HVStatusCreator::BADHVMAP& hvIssues, const RBMAP& runBoundaries, TH1F* issueDurations) {
+  bool containsRamp = false;
+  if (hvIssues.size() > 10) containsRamp = true;
+
   for (const auto& [alias, timeRanges] : hvIssues) {
     string *aliasExcluded = std::find(std::begin(exlcudeAlias), std::end(exlcudeAlias), alias);
     if (aliasExcluded != std::end(exlcudeAlias)) {
@@ -394,11 +497,21 @@ void SelectPrintHVIssuesFromClass(const o2::mch::HVStatusCreator::BADHVMAP& hvIs
       }
 
       if (inRunRange) {
+        if (containsRamp && ((tStop - tStart)/1000 > 1800)) continue; // manual way to exclude ramp-up/ramp-down from printing
+
         if (!foundIssue) {
           std::cout << "\nAlias: " << alias << std::endl;
           foundIssue = true;
         }
         printf("%lld -> %lld (%s - %s)\n", tStart, tStop, GetTime(tStart).c_str(), GetTime(tStop).c_str());
+
+        float duration;
+        if ((tStop-tStart)/1000 > 59) {
+          duration = 59.9;
+        } else {
+          duration = (tStop-tStart)/1000;
+        }
+        issueDurations->Fill(duration);
       }
       if (foundIssue) std::cout << std::endl;
     }
@@ -706,6 +819,37 @@ void DrawRunBoudaries(const RBMAP& runBoundaries, TCanvas* c)
     endRunLine->SetLineColor(2);
     endRunLine->SetLineWidth(1);
     endRunLine->Draw();
+  }
+}
+
+void PrintHVIssuesPerObj(const BADHVMAP hvIssuesPerCh[10])
+{
+  for (int ch = 0; ch < 10; ++ch) {
+    // count number of alias with issues
+    int aliasCount = 0;
+    for (const auto& [alias, hv_issues]: hvIssuesPerCh[ch]) {
+      if (!hv_issues.empty()) aliasCount++;
+    }
+
+    bool containsRamp = false;
+    if (aliasCount > 10) containsRamp = true; 
+
+    for (const auto& [alias, hv_issues]: hvIssuesPerCh[ch]) {
+      if (!hv_issues.empty()) {
+        string *aliasExcluded = std::find(std::begin(exlcudeAlias), std::end(exlcudeAlias), alias);
+        if (aliasExcluded != std::end(exlcudeAlias)) {
+          continue;
+        }
+
+        printf("\nAlias: %s \n", alias.c_str());
+        for (const auto& [start, stop, mean, min, count, runs] : hv_issues) {
+          if (containsRamp && ((stop-start)/1000 > 1800)) continue; // manual way to exclude ramp-up/ramp-down that pass run boundary check
+          printf("%lld -> %lld (%s - %s)\n", start, stop, GetTime(start).c_str(), GetTime(stop).c_str());
+          //printf("Start: %s; End: %s; Mean: %f; Min: %f; Count: %d; Runs: %s \n", GetTime(start).c_str(), GetTime(stop).c_str(), mean, min, count, (runs).c_str());
+        }
+        std::cout << std::endl;
+      }
+    }
   }
 }
 
