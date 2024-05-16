@@ -39,7 +39,7 @@ using BADHVLIST = std::vector<std::tuple<uint64_t, uint64_t, double, double, uin
 using BADHVMAP = std::map<std::string, BADHVLIST>;
 
 double yRange[2] = {-1., 1700.};
-double hvLimits[10] = {1550., 1550., 1590., 1590., 1590., 1590., 1590., 1590., 1590., 1590.};
+double hvLimits[10] = {1550., 1550., 1600., 1600., 1600., 1600., 1600., 1600., 1600., 1600.}; // from chamber 3 1600
 uint64_t minDuration = 0; // Tune this for fluctuations
 string exlcudeAlias[1] = {"MchHvLvLeft/Chamber01Left/Quad2Sect2.actual.vMon"}; // MchHvLvLeft/Chamber01Left/Quad2Sect2.actual.vMon
 
@@ -62,8 +62,8 @@ void FindHVIssues(const HVVALUES& HV_values, double hvLimit, BADHVLIST& hvIssues
 void SelectHVIssues(BADHVMAP& hvIssuesList, const RBMAP& runBoundaries, uint64_t minDuration);
 void PrintHVIssues(const BADHVMAP hvIssuesPerCh[10]);
 void PrintHVIssuesPerObj(const BADHVMAP hvIssuesPerCh[10]);
-void FindHVIssuesMacro(o2::ccdb::CcdbApi const& api, HVBMAP& hvBoundaries, const RBMAP& runBoundaries, bool plotHVTimeline, bool plotStats);
-void FindHVIssuesPerObjectMacro(o2::ccdb::CcdbApi const& api, HVBMAP& hvBoundaries, const RBMAP& runBoundaries, bool plotHVObjects, bool plotStats);
+void FindHVIssuesMacro(o2::ccdb::CcdbApi const& api, std::vector<DPMAP*> hvObjects, const RBMAP& runBoundaries, bool plotHVTimeline, bool plotStats);
+void FindHVIssuesPerObjectMacro(o2::ccdb::CcdbApi const& api, HVBMAP& hvBoundaries, std::vector<DPMAP*> hvObjects, const RBMAP& runBoundaries, bool plotHVObjects, bool plotStats);
 void FindHVIssuesWithClassMacro(o2::ccdb::CcdbApi const& api, std::vector<DPMAP*> hvObjects, const RBMAP& runBoundaries, bool plotStats);
 void SelectPrintHVIssuesFromClass(const o2::mch::HVStatusCreator::BADHVMAP& hvIssues, const RBMAP& runBoundaries, TH1F* issueDurations);
 
@@ -83,6 +83,8 @@ int main() {
 
     // look at run boundaries
     auto runBoundaries = GetRunBoundaries(api, runlist);
+
+    // Add check here that the runs are ordered in time
 
     if (runBoundaries.empty()) {
         printf("no run found from the list\n");
@@ -106,21 +108,17 @@ int main() {
     for (auto boundaries : hvBoundaries) {
       auto* HV_map = api.retrieveFromTFileAny<DPMAP>("MCH/Calib/HV", metadata, boundaries.first);
       hvObjects[iObj] = HV_map;
-      // for (auto& entry : hvObjects[iObj]) {
-      //   std::string entry_alias = (entry.first).get_alias();
-      //   std::cout << entry_alias << std::endl;
-      // }
       iObj++;
     };
 
-    // // Compare the macros from per object manual -> per object by class
-    // std::cout << "\n==== Issues found from continuous MACRO ====\n";
-    // FindHVIssuesMacro(api, hvBoundaries, runBoundaries, false, true);
-    // std::cout << "============================================\n\n";
+    // Compare the macros from per object manual -> per object by class
+    std::cout << "\n==== Issues found from continuous MACRO ====\n";
+    FindHVIssuesMacro(api, hvObjects, runBoundaries, false, true);
+    std::cout << "============================================\n\n";
 
-    // std::cout << "\n==== Issues found from per object MACRO ====\n";
-    // FindHVIssuesPerObjectMacro(api, hvBoundaries, runBoundaries, false, true);
-    // std::cout << "============================================\n\n";
+    std::cout << "\n==== Issues found from per object MACRO ====\n";
+    FindHVIssuesPerObjectMacro(api, hvBoundaries, hvObjects, runBoundaries, false, true);
+    std::cout << "============================================\n\n";
 
     std::cout << "\n==== Issues found from per object through CLASS ==== \n";
     FindHVIssuesWithClassMacro(api, hvObjects, runBoundaries, true);
@@ -131,11 +129,6 @@ int main() {
 
 void FindHVIssuesWithClassMacro(o2::ccdb::CcdbApi const& api, std::vector<DPMAP*> hvObjects, const RBMAP& runBoundaries, bool plotStats) {
   TH1F* issueDuration = new TH1F("issue_durations_class", "HV Issues Durations from per Obj through Class;Issue Duration (s);N", 60, 0, 60); // distribution of HV issues duration in seconds
-
-  std::map<std::string, std::string> metadata;
-
-  // for (auto boundaries : hvBoundaries) {
-  //   auto* HV_map = api.retrieveFromTFileAny<DPMAP>("MCH/Calib/HV", metadata, boundaries.first);
 
   for (auto hvMap : hvObjects) {
     // Create HVStatusCreator object
@@ -162,19 +155,19 @@ void FindHVIssuesWithClassMacro(o2::ccdb::CcdbApi const& api, std::vector<DPMAP*
   }
 };
 
-void FindHVIssuesPerObjectMacro(o2::ccdb::CcdbApi const& api, HVBMAP& hvBoundaries, const RBMAP& runBoundaries, bool plotHVObjects, bool plotStats) {
+void FindHVIssuesPerObjectMacro(o2::ccdb::CcdbApi const& api, HVBMAP& hvBoundaries, std::vector<DPMAP*> hvObjects, const RBMAP& runBoundaries, bool plotHVObjects, bool plotStats) {
   // Case of iterating through one HV object at a time and spot HV issue
   TH1F* issueDuration = new TH1F("issue_durations_object", "HV Issues Durations from per Obj;Issue Duration (s);N", 60, 0, 60); // distribution of HV issues duration in seconds
 
-  std::map<std::string, std::string> metadata;
-
-  for (auto boundaries : hvBoundaries) {
-    auto* HV_map = api.retrieveFromTFileAny<DPMAP>("MCH/Calib/HV", metadata, boundaries.first);
+  int iObj = 0;
+  for (auto& boundaries : hvBoundaries) {
+    auto hvMap = hvObjects[iObj];
+    iObj++;
 
     DPMAP2 dpsMapsPerCh[10];
 
     // Fill HV values for single object
-    for (auto& entry : *HV_map) {
+    for (auto& entry : *hvMap) {
       std::string entry_alias = (entry.first).get_alias();
 
       if (entry_alias.find("vMon") != std::string::npos) { // only for voltage channels
@@ -222,7 +215,7 @@ void FindHVIssuesPerObjectMacro(o2::ccdb::CcdbApi const& api, HVBMAP& hvBoundari
         }
 
         for (const auto& [start, stop, mean, min, count, runs] : hv_issues) {
-          if (containsRamp && ((stop-start)/1000 > 1800)) continue; // manual way to exclude ramp-up/ramp-down that pass run boundary check
+          //if (containsRamp && ((stop-start)/1000 > 1800)) continue; // manual way to exclude ramp-up/ramp-down that pass run boundary check
 
           float duration;
           if ((stop-start)/1000 > 59) {
@@ -269,17 +262,14 @@ void FindHVIssuesPerObjectMacro(o2::ccdb::CcdbApi const& api, HVBMAP& hvBoundari
 
 }
 
-void FindHVIssuesMacro(o2::ccdb::CcdbApi const& api, HVBMAP& hvBoundaries, const RBMAP& runBoundaries, bool plotHVTimeline, bool plotStats) {
+void FindHVIssuesMacro(o2::ccdb::CcdbApi const& api, std::vector<DPMAP*> hvObjects, const RBMAP& runBoundaries, bool plotHVTimeline, bool plotStats) {
   // Case of iterating through all HV points continuously to spot issues
 
   // fetch HV object in timestamp range
   DPMAP2 dpsMapsPerCh[10];
-  std::map<std::string, std::string> metadata;
 
-  for (auto boundaries : hvBoundaries) {
-    auto* HV_map = api.retrieveFromTFileAny<DPMAP>("MCH/Calib/HV", metadata, boundaries.first);
-
-    for (auto& entry : *HV_map) {
+  for (auto hvMap : hvObjects) {
+    for (auto& entry : *hvMap) {
       std::string entry_alias = (entry.first).get_alias();
 
       if (entry_alias.find("vMon") != std::string::npos) { // only for voltage channels
@@ -318,13 +308,6 @@ void FindHVIssuesMacro(o2::ccdb::CcdbApi const& api, HVBMAP& hvBoundaries, const
   TH1F* issueDuration = new TH1F("issue_durations_full", "HV Issues Durations from Full Timeline;Issue Duration (s);N", 60, 0, 60); // distribution of HV issues duration in seconds
 
   for (int ch = 0; ch < 10; ++ch) {
-    // int aliasCount = 0;
-    // for (const auto& [alias, hv_issues]: hvIssuesPerCh[ch]) {
-    //   if (!hv_issues.empty()) aliasCount++;
-    // }
-
-    // if (aliasCount > 10) continue; // manual way to exclude ramp-up/ramp-down from printing
-
     for (const auto& [alias, hv_issues]: hvIssuesPerCh[ch]) {
       string *aliasExcluded = std::find(std::begin(exlcudeAlias), std::end(exlcudeAlias), alias);
       if (aliasExcluded != std::end(exlcudeAlias)) {
@@ -497,7 +480,7 @@ void SelectPrintHVIssuesFromClass(const o2::mch::HVStatusCreator::BADHVMAP& hvIs
       }
 
       if (inRunRange) {
-        if (containsRamp && ((tStop - tStart)/1000 > 1800)) continue; // manual way to exclude ramp-up/ramp-down from printing
+        //if (containsRamp && ((tStop - tStart)/1000 > 1800)) continue; // manual way to exclude ramp-up/ramp-down from printing
 
         if (!foundIssue) {
           std::cout << "\nAlias: " << alias << std::endl;
@@ -855,6 +838,7 @@ void PrintHVIssuesPerObj(const BADHVMAP hvIssuesPerCh[10])
 
 void PrintHVIssues(const BADHVMAP hvIssuesPerCh[10])
 {
+  int aliasCount = 0;
   for (int ch = 0; ch < 10; ++ch) {
     for (const auto& [alias, hv_issues]: hvIssuesPerCh[ch]) {
       if (!hv_issues.empty()) {
@@ -862,6 +846,7 @@ void PrintHVIssues(const BADHVMAP hvIssuesPerCh[10])
         if (aliasExcluded != std::end(exlcudeAlias)) {
           continue;
         }
+        aliasCount++;
 
         printf("\nAlias: %s \n", alias.c_str());
         for (const auto& [start, stop, mean, min, count, runs] : hv_issues) {
@@ -872,4 +857,6 @@ void PrintHVIssues(const BADHVMAP hvIssuesPerCh[10])
       }
     }
   }
+
+  std::cout << "Number of considered alias channels: " << aliasCount << std::endl;
 }
