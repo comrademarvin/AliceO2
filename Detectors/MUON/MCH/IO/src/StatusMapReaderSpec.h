@@ -9,14 +9,14 @@
 // granted to it by virtue of its status as an Intergovernmental Organization
 // or submit itself to any jurisdiction.
 
-#ifdef __CLING__
+#ifndef O2_MCH_WORKFLOW_STATUSMAP_READER_SPEC_H
+#define O2_MCH_WORKFLOW_STATUSMAP_READER_SPEC_H
 
-#pragma link off all globals;
-#pragma link off all classes;
-#pragma link off all functions;
+#include "Framework/DataProcessorSpec.h"
 
-#pragma link C++ class o2::focal::EventReader + ;
-#pragma link C++ class o2::focal::TestbeamAnalysis + ;
-#pragma link C++ class o2::focal::Geometry + ;
-#pragma link C++ class o2::focal::Composition + ;
+namespace o2::mch
+{
+framework::DataProcessorSpec getStatusMapReaderSpec(const char* specName = "mch-statusmap-reader");
+}
+
 #endif
