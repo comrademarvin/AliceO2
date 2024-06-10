@@ -18,10 +18,6 @@
 
 float sum(float s, o2::dcs::DataPointValue v);
 
-// HV Issue finder parameters
-const double hvLimits[10] = {1550., 1550., 1590., 1590., 1590., 1590., 1590., 1590., 1590., 1590.};
-const uint64_t minDuration = 0; // Tune this for fluctuations?
-
 namespace o2::mch
 {
 
@@ -40,7 +36,7 @@ void HVStatusCreator::findAllIssues(const DPMAP& dpMap)
     bool ongoingIssue = false;
 
     for (auto& [timestamp, valueHV] : dpsHV) {
-      if (valueHV < hvLimits[chamber]) {
+      if (valueHV < StatusMapCreatorParam::Instance().hvLimits[chamber]) {
         if (!ongoingIssue) {
           tStart = timestamp;
           tStop = tStart;
@@ -51,24 +47,20 @@ void HVStatusCreator::findAllIssues(const DPMAP& dpMap)
       } else {
         if (ongoingIssue) {
           tStop = timestamp;
-          if ((tStop - tStart) > minDuration) {
-            TimeRange newIssue;
-            newIssue.begin = tStart;
-            newIssue.end = tStop;
-            hvIssuesList.push_back(newIssue);
-          }
+          TimeRange newIssue;
+          newIssue.begin = tStart;
+          newIssue.end = tStop;
+          hvIssuesList.push_back(newIssue);
           ongoingIssue = false;
         }
       }
     }
     // ongoing issue at the end of the object
     if (ongoingIssue && (tStart != tStop)) {
-      if ((tStop - tStart) > minDuration) {
-        TimeRange newIssue;
-        newIssue.begin = tStart;
-        newIssue.end = tStop;
-        hvIssuesList.push_back(newIssue);
-      }
+      TimeRange newIssue;
+      newIssue.begin = tStart;
+      newIssue.end = tStop;
+      hvIssuesList.push_back(newIssue);
     }
 
     // add issues of the alias if they exist

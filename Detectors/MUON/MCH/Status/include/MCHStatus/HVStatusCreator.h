@@ -20,6 +20,7 @@
 
 #include "DetectorsDCS/DataPointIdentifier.h"
 #include "DetectorsDCS/DataPointValue.h"
+#include "MCHStatus/StatusMapCreatorParam.h"
 
 namespace o2::mch
 {
@@ -59,11 +60,14 @@ class HVStatusCreator
     uint64_t end = 0;   ///< end of time range
 
     /**
-     * @brief check if the time range contains the given time stamp
+     * @brief check if the time range contains the given time stamp and if it is longer than the set minimum duration
      * @param timestamp time stamp of interest
      * @return true if the time stamp is in the time range
      */
-    bool contains(uint64_t timestamp) const { return timestamp >= begin && timestamp < end; }
+    bool contains(uint64_t timestamp) const {
+      if ((end - begin) < StatusMapCreatorParam::Instance().minDuration) return false;
+      return timestamp >= begin && timestamp < end; 
+    }
   };
 
   using BADHVMAP = std::unordered_map<std::string, std::vector<TimeRange>>;

@@ -40,7 +40,7 @@ using BADHVMAP = std::map<std::string, BADHVLIST>;
 
 double yRange[2] = {-1., 1700.};
 double hvLimits[10] = {1550., 1550., 1600., 1600., 1600., 1600., 1600., 1600., 1600., 1600.}; // from chamber 3 1600
-uint64_t minDuration = 0; // Tune this for fluctuations
+uint64_t minDuration = 10*1000; // Tune this for fluctuations
 string exlcudeAlias[1] = {"MchHvLvLeft/Chamber01Left/Quad2Sect2.actual.vMon"}; // MchHvLvLeft/Chamber01Left/Quad2Sect2.actual.vMon
 
 float sum(float s, o2::dcs::DataPointValue v);
@@ -112,12 +112,12 @@ int main() {
     };
 
     // Compare the macros from per object manual -> per object by class
-    std::cout << "\n==== Issues found from continuous MACRO ====\n";
-    FindHVIssuesMacro(api, hvObjects, runBoundaries, false, true);
-    std::cout << "============================================\n\n";
+    // std::cout << "\n==== Issues found from continuous MACRO ====\n";
+    // FindHVIssuesMacro(api, hvObjects, runBoundaries, false, true);
+    // std::cout << "============================================\n\n";
 
     std::cout << "\n==== Issues found from per object MACRO ====\n";
-    FindHVIssuesPerObjectMacro(api, hvBoundaries, hvObjects, runBoundaries, false, true);
+    FindHVIssuesPerObjectMacro(api, hvBoundaries, hvObjects, runBoundaries, true, true);
     std::cout << "============================================\n\n";
 
     std::cout << "\n==== Issues found from per object through CLASS ==== \n";
@@ -480,7 +480,9 @@ void SelectPrintHVIssuesFromClass(const o2::mch::HVStatusCreator::BADHVMAP& hvIs
       }
 
       if (inRunRange) {
-        //if (containsRamp && ((tStop - tStart)/1000 > 1800)) continue; // manual way to exclude ramp-up/ramp-down from printing
+        if (containsRamp && ((tStop - tStart)/1000 > 1800)) continue; // manual way to exclude ramp-up/ramp-down from printing
+        bool containsCheck = timeRange.contains(tStart);
+        if (!containsCheck) continue;
 
         if (!foundIssue) {
           std::cout << "\nAlias: " << alias << std::endl;
@@ -815,7 +817,7 @@ void PrintHVIssuesPerObj(const BADHVMAP hvIssuesPerCh[10])
     }
 
     bool containsRamp = false;
-    if (aliasCount > 10) containsRamp = true; 
+    if (aliasCount > 10) containsRamp = true;
 
     for (const auto& [alias, hv_issues]: hvIssuesPerCh[ch]) {
       if (!hv_issues.empty()) {
