@@ -19,6 +19,7 @@
 
 #include "DetectorsDCS/DataPointIdentifier.h"
 #include "DetectorsDCS/DataPointValue.h"
+#include "MCHStatus/StatusMapCreatorParam.h"
 
 namespace o2::mch
 {
@@ -50,6 +51,7 @@ class HVStatusCreator
   using DPID = dcs::DataPointIdentifier;
   using DPVAL = dcs::DataPointValue;
   using DPMAP = std::unordered_map<DPID, std::vector<DPVAL>>;
+  using DPMAP2 = std::map<std::string, std::map<uint64_t, double>>;
 
   /**
    * Find all HV issues and their time ranges
@@ -86,16 +88,26 @@ class HVStatusCreator
     uint64_t end = 0;   ///< end of time range
 
     /**
-     * @brief check if the time range contains the given time stamp
+     * @brief check if the time range contains the given time stamp and if longer than the set minimum duration
      * @param timestamp time stamp of interest
-     * @return true if the time stamp is in the time range
+     * @return true if the time stamp is in the time range and longer than minimum duration
      */
-    bool contains(uint64_t timestamp) const { return timestamp >= begin && timestamp < end; }
+    bool contains(uint64_t timestamp) const {
+      if ((end - begin) < StatusMapCreatorParam::Instance().minDuration) return false;
+      return timestamp >= begin && timestamp < end; 
+    }
   };
 
   /// map of bad HV channels with the time ranges concerned
   std::unordered_map<std::string, std::vector<TimeRange>> mBadHVTimeRanges{};
   std::set<std::string> mCurrentBadHVs{}; ///< current list of bad HV channels
+
+  /**
+   * @brief decode the DCS DPMAP to be processed for HV issues
+   * @param dpMap encoded DCS HV data points from CCDB
+   * @return the decoded DPMAP2
+   */
+  DPMAP2 decodeDPMAP(const DPMAP& dpMap);
 };
 
 } // namespace o2::mch
