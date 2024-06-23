@@ -31,8 +31,7 @@ void HVStatusCreator::findAllIssues(const DPMAP& dpMap)
     int chamber = o2::mch::dcs::toInt(o2::mch::dcs::aliasToChamber(alias));
     std::vector<TimeRange> hvIssuesList;
 
-    uint64_t tStart = 0;
-    uint64_t tStop = 0;
+    uint64_t tStart, tStop = 0;
     bool ongoingIssue = false;
 
     for (auto& [timestamp, valueHV] : dpsHV) {
@@ -47,9 +46,7 @@ void HVStatusCreator::findAllIssues(const DPMAP& dpMap)
       } else {
         if (ongoingIssue) {
           tStop = timestamp;
-          TimeRange newIssue;
-          newIssue.begin = tStart;
-          newIssue.end = tStop;
+          TimeRange newIssue(tStart, tStop);
           hvIssuesList.push_back(newIssue);
           ongoingIssue = false;
         }
@@ -57,9 +54,7 @@ void HVStatusCreator::findAllIssues(const DPMAP& dpMap)
     }
     // ongoing issue at the end of the object
     if (ongoingIssue && (tStart != tStop)) {
-      TimeRange newIssue;
-      newIssue.begin = tStart;
-      newIssue.end = tStop;
+      TimeRange newIssue(tStart, tStop);
       hvIssuesList.push_back(newIssue);
     }
 

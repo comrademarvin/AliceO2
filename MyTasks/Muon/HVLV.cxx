@@ -215,7 +215,7 @@ void FindHVIssuesPerObjectMacro(o2::ccdb::CcdbApi const& api, HVBMAP& hvBoundari
         }
 
         for (const auto& [start, stop, mean, min, count, runs] : hv_issues) {
-          //if (containsRamp && ((stop-start)/1000 > 1800)) continue; // manual way to exclude ramp-up/ramp-down that pass run boundary check
+          if (containsRamp && ((stop-start)/1000 > 1800)) continue; // manual way to exclude ramp-up/ramp-down that pass run boundary check
 
           float duration;
           if ((stop-start)/1000 > 59) {
@@ -454,7 +454,7 @@ void SelectHVIssues(BADHVMAP& hvIssuesList, const RBMAP& runBoundaries, uint64_t
 
 void SelectPrintHVIssuesFromClass(const o2::mch::HVStatusCreator::BADHVMAP& hvIssues, const RBMAP& runBoundaries, TH1F* issueDurations) {
   bool containsRamp = false;
-  if (hvIssues.size() > 10) containsRamp = true;
+  if (hvIssues.size() > 50) containsRamp = true;
 
   for (const auto& [alias, timeRanges] : hvIssues) {
     string *aliasExcluded = std::find(std::begin(exlcudeAlias), std::end(exlcudeAlias), alias);
@@ -826,7 +826,7 @@ void PrintHVIssuesPerObj(const BADHVMAP hvIssuesPerCh[10])
           continue;
         }
 
-        printf("\nAlias: %s \n", alias.c_str());
+        if (hv_issues.size() > 0) printf("\nAlias: %s \n", alias.c_str());
         for (const auto& [start, stop, mean, min, count, runs] : hv_issues) {
           if (containsRamp && ((stop-start)/1000 > 1800)) continue; // manual way to exclude ramp-up/ramp-down that pass run boundary check
           printf("%lld -> %lld (%s - %s)\n", start, stop, GetTime(start).c_str(), GetTime(stop).c_str());
