@@ -87,6 +87,8 @@ class HVStatusCreator
     uint64_t begin = 0; ///< beginning of time range
     uint64_t end = 0;   ///< end of time range
 
+    TimeRange(uint64_t begin, uint64_t end) : begin(begin), end(end) {}; // default constructor
+
     /**
      * @brief check if the time range contains the given time stamp and if longer than the set minimum duration
      * @param timestamp time stamp of interest
