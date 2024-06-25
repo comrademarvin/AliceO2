@@ -40,7 +40,7 @@ using BADHVMAP = std::map<std::string, BADHVLIST>;
 
 double yRange[2] = {-1., 1700.};
 double hvLimits[10] = {1550., 1550., 1600., 1600., 1600., 1600., 1600., 1600., 1600., 1600.}; // from chamber 3 1600
-uint64_t minDuration = 10*1000; // Tune this for fluctuations
+uint64_t minDuration = 0; //10*1000; // Tune this for fluctuations
 string exlcudeAlias[1] = {"MchHvLvLeft/Chamber01Left/Quad2Sect2.actual.vMon"}; // MchHvLvLeft/Chamber01Left/Quad2Sect2.actual.vMon
 
 float sum(float s, o2::dcs::DataPointValue v);
@@ -133,7 +133,7 @@ void FindHVIssuesWithClassMacro(o2::ccdb::CcdbApi const& api, std::vector<DPMAP*
   for (auto hvMap : hvObjects) {
     // Create HVStatusCreator object
     auto* HVStatusCreator = new o2::mch::HVStatusCreator();
-    HVStatusCreator->findAllIssues(*hvMap);
+    HVStatusCreator->findBadHVs(*hvMap);
 
     // remove issues that are not within a run range (to get rid of ramp up/down)
     auto hvIssues = HVStatusCreator->getHVIssuesList();

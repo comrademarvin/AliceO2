@@ -10,32 +10,80 @@
 // or submit itself to any jurisdiction.
 
 #include <algorithm>
+#include <map>
 
 #include "MCHStatus/HVStatusCreator.h"
+
 #include "MCHConditions/DetectionElement.h"
 #include "MCHGlobalMapping/Mapper.h"
 #include "MCHStatus/StatusMap.h"
+#include "MCHStatus/StatusMapCreatorParam.h"
 
-float sum(float s, o2::dcs::DataPointValue v);
+using DPMAP2 = std::map<std::string, std::map<uint64_t, double>>;
+
+// converts DCS data point value to double HV value
+double dpConverter(o2::dcs::DataPointValue v)
+{
+  union Converter {
+    uint64_t raw_data;
+    double value;
+  } converter;
+  converter.raw_data = v.payload_pt1;
+  return converter.value;
+};
+
+// decode the DCS DPMAP to be processed for HV issues
+DPMAP2 decodeDPMAP(const o2::mch::HVStatusCreator::DPMAP& dpMap) {
+  DPMAP2 dpsMapPerAlias;
+
+  for (const auto& [dpId, dpsHV] : dpMap) {
+    std::string alias = dpId.get_alias();
+
+    if (alias.find("vMon") != std::string::npos) {
+      auto& dps2 = dpsMapPerAlias[alias];
+
+      // copy first point to the beginning of time
+      auto firstPoint = dpsHV.front();
+      dps2.emplace(0, dpConverter(firstPoint));
+
+      for (const auto& value : dpsHV) {
+        double valueConverted = dpConverter(value);
+        dps2.emplace(value.get_epoch_time(), valueConverted);
+      }
+
+      // copy last point to the end of time
+      auto lastPoint = dpsHV.back();
+      dps2.emplace(std::numeric_limits<uint64_t>::max(), dpConverter(lastPoint));
+    }
+  }
+
+  return dpsMapPerAlias;
+}
 
 namespace o2::mch
 {
 
-void HVStatusCreator::findAllIssues(const DPMAP& dpMap)
+void HVStatusCreator::findBadHVs(const DPMAP& dpMap)
 {
+  // clear current list of issues
+  HVStatusCreator::clear();
+
   // decode the DCS DPMAP
   DPMAP2 dpsMapPerAlias = decodeDPMAP(dpMap);
-  
-  // Find list of HV issues per alias 
+
+  // Find list of HV issues per alias
   for (const auto& [alias, dpsHV] : dpsMapPerAlias) {
     int chamber = o2::mch::dcs::toInt(o2::mch::dcs::aliasToChamber(alias));
+    auto chamberThreshold = StatusMapCreatorParam::Instance().hvLimits[chamber];
+    auto minDuration = StatusMapCreatorParam::Instance().minDuration;
+
     std::vector<TimeRange> hvIssuesList;
 
     uint64_t tStart, tStop = 0;
     bool ongoingIssue = false;
 
     for (auto& [timestamp, valueHV] : dpsHV) {
-      if (valueHV < StatusMapCreatorParam::Instance().hvLimits[chamber]) {
+      if (valueHV < chamberThreshold) { // check whether HV point is below set threshold for chamber
         if (!ongoingIssue) {
           tStart = timestamp;
           tStop = tStart;
@@ -46,26 +94,32 @@ void HVStatusCreator::findAllIssues(const DPMAP& dpMap)
       } else {
         if (ongoingIssue) {
           tStop = timestamp;
-          TimeRange newIssue(tStart, tStop);
-          hvIssuesList.push_back(newIssue);
+          if ((tStop - tStart) > minDuration) { // exclude issues less than set minimum duration parameter
+            TimeRange newIssue(tStart, tStop);
+            hvIssuesList.push_back(newIssue);
+          }
           ongoingIssue = false;
         }
       }
     }
     // ongoing issue at the end of the object
-    if (ongoingIssue && (tStart != tStop)) {
+    if (ongoingIssue && ((tStop - tStart) > minDuration)) {
       TimeRange newIssue(tStart, tStop);
       hvIssuesList.push_back(newIssue);
     }
 
-    // add issues of the alias if they exist
+    // add issues for the alias if non-empty
     if (!hvIssuesList.empty()) {
-      this->mBadHVTimeRanges.emplace(alias, hvIssuesList);
+      mBadHVTimeRanges.emplace(alias, hvIssuesList);
     }
   }
 }
 
-bool HVStatusCreator::findCurrentIssues(uint64_t timestamp)
+HVStatusCreator::BADHVMAP HVStatusCreator::getHVIssuesList() {
+  return mBadHVTimeRanges;
+}
+
+bool HVStatusCreator::findCurrentBadHVs(uint64_t timestamp)
 {
   // list issues at the given time stamp
   std::set<std::string> currentBadHVs{};
@@ -100,47 +154,4 @@ bool HVStatusCreator::findCurrentIssues(uint64_t timestamp)
 //   }
 // }
 
-HVStatusCreator::DPMAP2 HVStatusCreator::decodeDPMAP(const DPMAP& dpMap) {
-  // Fill HV values for object per alias
-  DPMAP2 dpsMapPerAlias;
-
-  for (auto& entry : dpMap) {
-    std::string alias = (entry.first).get_alias();
-
-    if (alias.find("vMon") != std::string::npos) { // Only consider voltage channels
-      auto dpsHV = entry.second;
-      auto& dps2 = dpsMapPerAlias[alias];
-
-      // copy first point to the beginning of time
-      auto firstPoint = dpsHV.front();
-      dps2.emplace(0, sum(0.0, firstPoint));
-
-      for (const auto& value : dpsHV) {
-        double valueConverted = sum(0.0, value);
-        dps2.emplace(value.get_epoch_time(), valueConverted);
-      }
-
-      // copy last point to the end of time
-      auto lastPoint = dpsHV.back();
-      dps2.emplace(9999999999999, sum(0.0, lastPoint));
-    }
-  }
-
-  return dpsMapPerAlias;
-}
-
-HVStatusCreator::BADHVMAP HVStatusCreator::getHVIssuesList() {
-  return this->mBadHVTimeRanges;
-}
-
 } // namespace o2::mch
-
-float sum(float s, o2::dcs::DataPointValue v) 
-{
-  union Converter {
-    uint64_t raw_data;
-    double value;
-  } converter;
-  converter.raw_data = v.payload_pt1;
-  return s + converter.value;
-};

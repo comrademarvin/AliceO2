@@ -14,13 +14,11 @@
 
 #include <set>
 #include <string>
-#include <map>
 #include <unordered_map>
 #include <vector>
 
 #include "DetectorsDCS/DataPointIdentifier.h"
 #include "DetectorsDCS/DataPointValue.h"
-#include "MCHStatus/StatusMapCreatorParam.h"
 
 namespace o2::mch
 {
@@ -52,25 +50,20 @@ class HVStatusCreator
   using DPID = o2::dcs::DataPointIdentifier;
   using DPVAL = o2::dcs::DataPointValue;
   using DPMAP = std::unordered_map<DPID, std::vector<DPVAL>>;
-  using DPMAP2 = std::map<std::string, std::map<uint64_t, double>>;
 
   /// @brief internal structure to define a time range
   struct TimeRange {
     uint64_t begin = 0; ///< beginning of time range
     uint64_t end = 0;   ///< end of time range
 
-    // default constructor
-    TimeRange(uint64_t begin, uint64_t end) : begin(begin), end(end) {};
+    TimeRange(uint64_t begin, uint64_t end) : begin(begin), end(end) {}; // default constructor
 
     /**
-     * @brief check if the time range contains the given time stamp and if it is longer than the set minimum duration
+     * @brief check if the time range contains the given time stamp
      * @param timestamp time stamp of interest
      * @return true if the time stamp is in the time range
      */
-    bool contains(uint64_t timestamp) const {
-      if ((end - begin) < StatusMapCreatorParam::Instance().minDuration) return false;
-      return timestamp >= begin && timestamp < end; 
-    }
+    bool contains(uint64_t timestamp) const { return timestamp >= begin && timestamp < end; }
   };
 
   using BADHVMAP = std::unordered_map<std::string, std::vector<TimeRange>>;
@@ -79,20 +72,29 @@ class HVStatusCreator
    * Find all HV issues and their time ranges
    * @param dpMap DCS HV data points from CCDB
    */
-  void findAllIssues(const DPMAP& dpMap);
+  void findBadHVs(const DPMAP& dpMap);
 
   /**
    * Find HV issues at a given time stamp
    * @param timestamp time stamp of interest
    * @return true if the list of issues has changed
    */
-  bool findCurrentIssues(uint64_t timestamp);
+  bool findCurrentBadHVs(uint64_t timestamp);
 
   // /**
-  //  * Add the current HV issues to the status map
+  //  * Add channels affected by current HV issues to the status map
   //  * @param statusMap statusMap to update
   //  */
   // void updateStatusMap(StatusMap& statusMap);
+
+  /**
+   * clear the internal lists of HV issues
+   */
+  void clear()
+  {
+    mBadHVTimeRanges.clear();
+    mCurrentBadHVs.clear();
+  }
 
   BADHVMAP getHVIssuesList();
 
@@ -100,13 +102,6 @@ class HVStatusCreator
   /// map of bad HV channels with the time ranges concerned
   BADHVMAP mBadHVTimeRanges{};
   std::set<std::string> mCurrentBadHVs{}; ///< current list of bad HV channels
-
-  /**
-   * @brief decode the DCS DPMAP to be processed for HV issues
-   * @param dpMap DCS HV data points from CCDB
-   * @return the decoded DPMAP2
-   */
-  DPMAP2 decodeDPMAP(const DPMAP& dpMap);
 };
 
 } // namespace o2::mch
