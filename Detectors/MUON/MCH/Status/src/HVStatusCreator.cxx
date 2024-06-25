@@ -22,7 +22,7 @@
 using DPMAP2 = std::map<std::string, std::map<uint64_t, double>>;
 
 // converts DCS data point value to double HV value
-float dpConverter(o2::dcs::DataPointValue v)
+double dpConverter(o2::dcs::DataPointValue v)
 {
   union Converter {
     uint64_t raw_data;
