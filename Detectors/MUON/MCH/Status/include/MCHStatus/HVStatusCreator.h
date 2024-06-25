@@ -19,7 +19,6 @@
 
 #include "DetectorsDCS/DataPointIdentifier.h"
 #include "DetectorsDCS/DataPointValue.h"
-#include "MCHStatus/StatusMapCreatorParam.h"
 
 namespace o2::mch
 {
@@ -90,14 +89,11 @@ class HVStatusCreator
     TimeRange(uint64_t begin, uint64_t end) : begin(begin), end(end) {}; // default constructor
 
     /**
-     * @brief check if the time range contains the given time stamp and if longer than the set minimum duration
+     * @brief check if the time range contains the given time stamp
      * @param timestamp time stamp of interest
-     * @return true if the time stamp is in the time range and longer than minimum duration
+     * @return true if the time stamp is in the time range
      */
-    bool contains(uint64_t timestamp) const {
-      if ((end - begin) < StatusMapCreatorParam::Instance().minDuration) return false;
-      return timestamp >= begin && timestamp < end; 
-    }
+    bool contains(uint64_t timestamp) const { return timestamp >= begin && timestamp < end; }
   };
 
   /// map of bad HV channels with the time ranges concerned
