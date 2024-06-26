@@ -50,7 +50,6 @@ class HVStatusCreator
   using DPID = dcs::DataPointIdentifier;
   using DPVAL = dcs::DataPointValue;
   using DPMAP = std::unordered_map<DPID, std::vector<DPVAL>>;
-  using DPMAP2 = std::map<std::string, std::map<uint64_t, double>>;
 
   /**
    * Find all HV issues and their time ranges
@@ -99,13 +98,6 @@ class HVStatusCreator
   /// map of bad HV channels with the time ranges concerned
   std::unordered_map<std::string, std::vector<TimeRange>> mBadHVTimeRanges{};
   std::set<std::string> mCurrentBadHVs{}; ///< current list of bad HV channels
-
-  /**
-   * @brief decode the DCS DPMAP to be processed for HV issues
-   * @param dpMap encoded DCS HV data points from CCDB
-   * @return the decoded DPMAP2
-   */
-  DPMAP2 decodeDPMAP(const DPMAP& dpMap);
 };
 
 } // namespace o2::mch

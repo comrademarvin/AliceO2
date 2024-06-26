@@ -82,7 +82,7 @@ void HVStatusCreator::findBadHVs(const DPMAP& dpMap)
     uint64_t tStart, tStop = 0;
     bool ongoingIssue = false;
 
-    for (auto& [timestamp, valueHV] : dpsHV) {
+    for (const auto& [timestamp, valueHV] : dpsHV) {
       if (valueHV < chamberThreshold) { // check whether HV point is below set threshold for chamber
         if (!ongoingIssue) {
           tStart = timestamp;
