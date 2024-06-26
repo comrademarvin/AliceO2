@@ -33,7 +33,8 @@ double dpConverter(o2::dcs::DataPointValue v)
 };
 
 // decode the DCS DPMAP to be processed for HV issues
-DPMAP2 decodeDPMAP(const o2::mch::HVStatusCreator::DPMAP& dpMap) {
+DPMAP2 decodeDPMAP(const o2::mch::HVStatusCreator::DPMAP& dpMap)
+{
   DPMAP2 dpsMapPerAlias;
 
   for (const auto& [dpId, dpsHV] : dpMap) {
@@ -148,6 +149,11 @@ void HVStatusCreator::updateStatusMap(StatusMap& statusMap)
       statusMap.addDE(deId, StatusMap::kBadHV);
     }
   }
+}
+
+HVStatusCreator::BADHVMAP HVStatusCreator::getHVIssuesList()
+{
+  return mBadHVTimeRanges;
 }
 
 } // namespace o2::mch
