@@ -41,7 +41,7 @@ using BADHVMAP = std::map<std::string, BADHVLIST>;
 double yRange[2] = {-1., 1700.};
 double hvLimits[10] = {1550., 1550., 1600., 1600., 1600., 1600., 1600., 1600., 1600., 1600.}; // from chamber 3 1600
 uint64_t minDuration = 0; //10*1000; // Tune this for fluctuations
-string exlcudeAlias[1] = {"MchHvLvLeft/Chamber01Left/Quad2Sect2.actual.vMon"}; // MchHvLvLeft/Chamber01Left/Quad2Sect2.actual.vMon
+string exlcudeAlias[1] = {}; // MchHvLvLeft/Chamber01Left/Quad2Sect2.actual.vMon
 
 float sum(float s, o2::dcs::DataPointValue v);
 std::set<int> GetRuns(std::string runList);
@@ -117,7 +117,7 @@ int main() {
     // std::cout << "============================================\n\n";
 
     std::cout << "\n==== Issues found from per object MACRO ====\n";
-    FindHVIssuesPerObjectMacro(api, hvBoundaries, hvObjects, runBoundaries, true, true);
+    FindHVIssuesPerObjectMacro(api, hvBoundaries, hvObjects, runBoundaries, false, true);
     std::cout << "============================================\n\n";
 
     std::cout << "\n==== Issues found from per object through CLASS ==== \n";

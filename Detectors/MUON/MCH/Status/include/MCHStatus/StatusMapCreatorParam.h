@@ -28,7 +28,7 @@ struct StatusMapCreatorParam : public o2::conf::ConfigurableParamHelper<StatusMa
   bool useRejectList = true;  ///< use extra (relative to bad channels above) rejection list
 
   double hvLimits[10] = {1550., 1550., 1600., 1600., 1600., 1600., 1600., 1600., 1600., 1600.}; // lower thresholds for HV chambers
-  uint64_t minDuration = 0; //10*1000; // minimum duration of HV issues
+  uint64_t minDuration = 10*1000; // minimum duration of HV issues
 
   bool isActive() const { return useBadChannels || useRejectList; }
 
