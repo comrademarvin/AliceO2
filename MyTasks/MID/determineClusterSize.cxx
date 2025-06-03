@@ -50,8 +50,8 @@ int main() {
     }
 
     // output histograms
-    TH1D* nTracksROF = new TH1D("ROF_track_count", "Number of Tracks per ROF", 50, 0, 50);
-    TH1D* nClusterStrips = new TH1D("cluster_strips_size", "Number of Strips in MID Clusters", 10, 0, 10);
+    TH1D* nTracksROF = new TH1D("ROF_track_count", "Number of Tracks per ROF;nTracks/ROF;count", 50, 0, 50);
+    TH1D* nClusterStrips = new TH1D("cluster_strips_size", "Number of Strips in MID Clusters;nStrips/Cluster;count", 30, 0, 30);
 
     // re-run preclusterizer on event digits
     o2::mid::PreClusterizer preClusterizer;
@@ -60,22 +60,22 @@ int main() {
     int entriesCount = 0;
     while (digitReader->Next() && recoReader->Next()) {
         //auto clusterRofIt = (*clusterRofs).begin(); // itterator over cluster ROFs for one TF
-        auto trackRofIt = (*trackRofs).begin();
+        auto trackRofIt = (*trackRofs).begin(); // itterator over track ROFs for one TF
 
-        gsl::span<o2::mid::ColumnData> sdigits(*digits);
+        gsl::span<o2::mid::ColumnData> sdigits(*digits); // all digits for the TF
 
         // itterate over digit ROFs for one TF
         for (auto digitRofIt = (*digitRofs).begin(), digitEnd = (*digitRofs).end(); digitRofIt != digitEnd; ++digitRofIt)
         {
-            auto nTracks = trackRofIt->nEntries;
-            if (nTracks > 0) { // check whether there are tracks for the ROF
+            auto nTracks = trackRofIt->nEntries; // number of tracks for the ROF
+            if (nTracks > 0) { // check whether there are any tracks for the ROF
                 //std::cout << "nTracks of ROF: " << nTracks << std::endl;
                 nTracksROF->Fill(nTracks);
 
-                // digits associated to tracks for the ROF
+                // subspan of digits for the ROF where there are tracks
                 auto eventDigits = sdigits.subspan(digitRofIt->firstEntry, digitRofIt->nEntries);
 
-                // run preclusterizer on event digits
+                // run pre-clusterizer on the event digits
                 preClusterizer.process(eventDigits);
                 auto preClusters = preClusterizer.getPreClusters();
 
