@@ -26,99 +26,142 @@
 #include "MIDBase/Mapping.h"
 #include "MIDBase/GeometryTransformer.h"
 #include "MIDClustering/PreClusterizer.h"
-#include "DataFormatsMCH/ROFRecord.h"
-#include "DataFormatsMCH/TrackMCH.h"
+#include "MIDClustering/PreCluster.h"
+#include "ReconstructionDataFormats/TrackMCHMID.h"
 
 std::tuple<TFile *, TTreeReader *> loadData(const char *fileName, const char *treeName);
+std::vector<o2::InteractionRecord> processMuonTracks(const char *fileName);
+std::vector<o2::mid::PreCluster> processMIDdigits(const char *fileMIDdigits, const char *fileMIDtracks, std::vector<o2::InteractionRecord> tracksIR);
+void processPreClusters(std::vector<o2::mid::PreCluster> preClustersMID);
 
 int main() {
-    // read in the MID/Muon track and digit infomation
-    auto [digitFile, digitReader] = loadData("mid-digits-decoded.root", "middigits");
-    auto [recoFileMID, recoReaderMID] = loadData("mid-reco.root", "midreco");
-    auto [recoFileMCH, recoReaderMCH] = loadData("mchtracks.root", "mchtracks");
-    auto [recoFileMuon, recoReaderMuon] = loadData("muontracks.root", "muontracks");
+    auto muonTracksIR = processMuonTracks("muontracks.root");
 
-    // MID
+    auto preClustersMID = processMIDdigits("mid-digits-decoded.root", "mid-reco.root", muonTracksIR);
+
+    processPreClusters(preClustersMID);
+
+    return 0;
+}
+
+void processPreClusters(std::vector<o2::mid::PreCluster> preClustersMID) {
+    TH1D* nStripsCluster = new TH1D("cluster_strip_size", "Number of Strips in MID PreClusters;nStrips/PreCluster;count", 30, 0, 30);
+
+    for (auto pc : preClustersMID) {
+        int nStripsInBetween;
+        if (pc.cathode == 0) { // is the cluster in the bending plane?
+            nStripsInBetween = pc.lastStrip - pc.firstStrip + 16 * (pc.lastLine - pc.firstLine);
+        } else {
+            nStripsInBetween = pc.lastStrip - pc.firstStrip;
+        }
+
+        nStripsCluster->Fill(nStripsInBetween);
+    }
+
+    // read out histograms
+    auto outFile = new TFile("cluster_size.root", "RECREATE");
+
+    TCanvas* nStripsCanvas = new TCanvas("cluster_strip_size", "cluster_strip_size");
+    nStripsCluster->Draw();
+    nStripsCanvas->Write();
+
+    delete outFile;
+}
+
+std::vector<o2::mid::PreCluster> processMIDdigits(const char *fileMIDdigits, const char *fileMIDtracks, std::vector<o2::InteractionRecord> tracksIR) {
+    // read in the MID track and digit infomation
+    auto [digitFile, digitReader] = loadData(fileMIDdigits, "middigits");
+    auto [recoFileMID, recoReaderMID] = loadData(fileMIDtracks, "midreco");
+
+    // branches of interest
     TTreeReaderValue<std::vector<o2::mid::ColumnData>> digits{*digitReader, "MIDDigit"};
     TTreeReaderValue<std::vector<o2::mid::ROFRecord>> digitRofs{*digitReader, "MIDROFRecords"};
-    // TTreeReaderValue<std::vector<o2::mid::Cluster>> clusters{*recoReaderMID, "MIDTrackCluster"};
-    // TTreeReaderValue<std::vector<o2::mid::ROFRecord>> clusterRofs{*recoReaderMID, "MIDTrackClusterROF"};
     TTreeReaderValue<std::vector<o2::mid::Track>> tracksMID{*recoReaderMID, "MIDTrack"};
     TTreeReaderValue<std::vector<o2::mid::ROFRecord>> trackRofsMID{*recoReaderMID, "MIDTrackROF"};
 
-    // MCH
-    TTreeReaderValue<std::vector<o2::mch::TrackMCH>> tracksMCH{*recoReaderMCH, "tracks"};
-    TTreeReaderValue<std::vector<o2::mch::ROFRecord>> trackRofsMCH{*recoReaderMCH, "trackrofs"};
-
-    if ((digitReader->GetEntries() != recoReaderMID->GetEntries()) && (digitReader->GetEntries() != recoReaderMCH->GetEntries())) // same number of TFs
+    // check if MID digits and tracks have the same number of TFs
+    if (digitReader->GetEntries() != recoReaderMID->GetEntries()) // same number of TFs
     {
         std::cout << "Error: the digit and cluster readers do not contain the same number of TFs";
         exit(-1);
     }
 
-    // output histograms
-    TH1D* nTracksROF_MID = new TH1D("ROF_track_count", "Number of MID Tracks per ROF;nTracks/ROF;count", 50, 0, 50);
-    TH1D* nClusterStrips = new TH1D("cluster_strips_size", "Number of Strips in MID Clusters;nStrips/Cluster;count", 30, 0, 30);
-
-    // re-run preclusterizer on event digits
+    // preclusterizer for MID event digits
     o2::mid::PreClusterizer preClusterizer;
 
+    // vector of MID preClusters
+    std::vector<o2::mid::PreCluster> midPreClusters;
+
     // itterate over entries, where each entry is a TF
-    int entriesCount = 0;
-    while (digitReader->Next() && recoReaderMID->Next() && recoReaderMCH->Next()) {
-        //auto clusterRofIt = (*clusterRofs).begin(); // itterator over cluster ROFs for one TF
-        auto trackRofItMID = (*trackRofsMID).begin(); // itterator over MID track ROFs for one TF
-        auto trackRofItMCH = (*trackRofsMCH).begin(); // itterator over MCH track ROFs for one TF
+    int timeframeCounter = 0;
+    int selectedROFcounter = 0;
+    while (digitReader->Next() && recoReaderMID->Next()) {
+        auto trackRofItMID = (*trackRofsMID).begin(); // iterator over MID track ROFs for one TF
 
-        gsl::span<o2::mid::ColumnData> sdigits(*digits); // all digits for the TF
+        gsl::span<o2::mid::ColumnData> sdigits(*digits); // all MID digits for the TF
 
-        // itterate over digit ROFs for one TF
-        for (auto digitRofIt = (*digitRofs).begin(), digitEnd = (*digitRofs).end(); digitRofIt != digitEnd; ++digitRofIt)
-        {
+        // itterate over MID digit ROFs for one TF
+        for (auto digitRofIt = (*digitRofs).begin(), digitEnd = (*digitRofs).end(); digitRofIt != digitEnd; ++digitRofIt) {
+            bool foundMuonTrack = false;
             auto nTracksMID = trackRofItMID->nEntries; // number of MID tracks for the ROF
-            auto nTracksMCH = trackRofItMCH->nEntries; // number of MCH tracks for the ROF
-            if ((nTracksMID > 0) && (nTracksMCH > 0)) { // check whether there are any tracks for the ROF
-                nTracksROF_MID->Fill(nTracksMID);
+            if (nTracksMID > 0) { // first check whether there are any MID tracks for the ROF
+                // secondly check whether there are any matched muon tracks for the ROF
+                auto rofIR = digitRofIt->interactionRecord;
+                for (auto trackIR : tracksIR) {
+                    if (rofIR == trackIR) {
+                        foundMuonTrack = true;
+                        break;
+                    }
+                }
+            }
 
+            if (foundMuonTrack) {
                 // subspan of digits for the ROF where there are tracks
                 auto eventDigits = sdigits.subspan(digitRofIt->firstEntry, digitRofIt->nEntries);
 
                 // run pre-clusterizer on the event digits
                 preClusterizer.process(eventDigits);
                 auto preClusters = preClusterizer.getPreClusters();
+                for (auto& pc : preClusters) midPreClusters.push_back(pc);
 
-                // itterate over pre-clusters
-                for (auto& pc : preClusters) {
-                    // number of strips in preCluster (from PreClusterHelper)
-                    int nStripsInBetween = pc.lastStrip - pc.firstStrip + 16 * (pc.lastLine - pc.firstLine);
-
-                    nClusterStrips->Fill(nStripsInBetween);
-                }
+                selectedROFcounter++;
             }
 
-            //++clusterRofIt;
             ++trackRofItMID;
         }
-        
-        entriesCount++;
+
+        timeframeCounter++;
     }
 
-    std::cout << "Number of entries (TFs): " << entriesCount << std::endl;
+    std::cout << "Number of TF in MID track/digits file: " << timeframeCounter << std::endl;
+    std::cout << "Number of selected digit ROFs: " << selectedROFcounter << std::endl;
 
-    // read out histograms
-    auto outFile = new TFile("cluster_size.root", "RECREATE");
+    return midPreClusters;
+}
 
-    TCanvas* nTracksCanvas = new TCanvas("ROF_tracks_count", "ROF_tracks_count");
-    nTracksROF_MID->Draw();
-    nTracksCanvas->Write();
+std::vector<o2::InteractionRecord> processMuonTracks(const char *fileName) {
+    // read in muon tracks from file
+    auto [recoFileMuon, recoReaderMuon] = loadData(fileName, "o2sim");
+    TTreeReaderValue<std::vector<o2::dataformats::TrackMCHMID>> muonTracks{*recoReaderMuon, "tracks"};
 
-    TCanvas* nStripsCanvas = new TCanvas("cluster_strip_size", "cluster_strip_size");
-    nClusterStrips->Draw();
-    nStripsCanvas->Write();
+    // declare vector to store interaction records of muon tracks (MCH+MID match)
+    std::vector<o2::InteractionRecord> muonTracksIR; 
 
-    delete outFile;
+    // iterate timeframe entries
+    int timeframeCounter = 0;
+    while (recoReaderMuon->Next()) {
+        // iterate over muon tracks for one TF
+        for (auto muonTrackIt = (*muonTracks).begin(), muonTrackEnd = (*muonTracks).end(); muonTrackIt != muonTrackEnd; ++muonTrackIt) {
+            muonTracksIR.push_back(muonTrackIt->getIR());
+        }
 
-    return 0;
+        timeframeCounter++;
+    }
+
+    std::cout << "Number of TF in muon track file: " << timeframeCounter << std::endl;
+    std::cout << "Number of muon tracks: " << muonTracksIR.size() << std::endl;
+
+    return muonTracksIR;
 }
 
 std::tuple<TFile *, TTreeReader *> loadData(const char *fileName, const char *treeName)
