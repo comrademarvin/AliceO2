@@ -31,7 +31,7 @@
 
 std::tuple<TFile *, TTreeReader *> loadData(const char *fileName, const char *treeName);
 std::vector<o2::InteractionRecord> processMuonTracks(const char *fileName);
-std::vector<o2::mid::PreCluster> processMIDdigits(const char *fileMIDdigits, const char *fileMIDtracks, std::vector<o2::InteractionRecord> tracksIR);
+std::vector<o2::mid::PreCluster> processMIDdigits(const char *fileMIDdigits, const char *fileMIDtracks, std::vector<o2::InteractionRecord> muonTracksIR);
 void processPreClusters(std::vector<o2::mid::PreCluster> preClustersMID);
 
 int main() {
@@ -48,6 +48,10 @@ void processPreClusters(std::vector<o2::mid::PreCluster> preClustersMID) {
     TH1D* nStripsCluster = new TH1D("cluster_strip_size", "Number of Strips in MID PreClusters;nStrips/PreCluster;count", 30, 0, 30);
 
     for (auto pc : preClustersMID) {
+        // check the plane of the clusters
+        //std::cout << pc.deId << std::endl;
+
+        // determine strip size 
         int nStripsInBetween;
         if (pc.cathode == 0) { // is the cluster in the bending plane?
             nStripsInBetween = pc.lastStrip - pc.firstStrip + 16 * (pc.lastLine - pc.firstLine);
@@ -68,7 +72,10 @@ void processPreClusters(std::vector<o2::mid::PreCluster> preClustersMID) {
     delete outFile;
 }
 
-std::vector<o2::mid::PreCluster> processMIDdigits(const char *fileMIDdigits, const char *fileMIDtracks, std::vector<o2::InteractionRecord> tracksIR) {
+std::vector<o2::mid::PreCluster> processMIDdigits(const char *fileMIDdigits, const char *fileMIDtracks, std::vector<o2::InteractionRecord> muonTracksIR) {
+    // output histograms
+    TH1D* nMuonTracksROF = new TH1D("muon_track_count_ROF", "Number of MCH+MID matched tracks per ROF;nTracks/ROF;count", 10, 0, 10);
+
     // read in the MID track and digit infomation
     auto [digitFile, digitReader] = loadData(fileMIDdigits, "middigits");
     auto [recoFileMID, recoReaderMID] = loadData(fileMIDtracks, "midreco");
@@ -102,20 +109,19 @@ std::vector<o2::mid::PreCluster> processMIDdigits(const char *fileMIDdigits, con
 
         // itterate over MID digit ROFs for one TF
         for (auto digitRofIt = (*digitRofs).begin(), digitEnd = (*digitRofs).end(); digitRofIt != digitEnd; ++digitRofIt) {
-            bool foundMuonTrack = false;
+            int muonTrackCount = 0;
             auto nTracksMID = trackRofItMID->nEntries; // number of MID tracks for the ROF
             if (nTracksMID > 0) { // first check whether there are any MID tracks for the ROF
                 // secondly check whether there are any matched muon tracks for the ROF
                 auto rofIR = digitRofIt->interactionRecord;
-                for (auto trackIR : tracksIR) {
-                    if (rofIR == trackIR) {
-                        foundMuonTrack = true;
-                        break;
-                    }
+                for (auto trackIR : muonTracksIR) {
+                    if (rofIR == trackIR) muonTrackCount++;
                 }
             }
 
-            if (foundMuonTrack) {
+            if (muonTrackCount > 0) {
+                nMuonTracksROF->Fill(muonTrackCount);
+
                 // subspan of digits for the ROF where there are tracks
                 auto eventDigits = sdigits.subspan(digitRofIt->firstEntry, digitRofIt->nEntries);
 
@@ -135,6 +141,15 @@ std::vector<o2::mid::PreCluster> processMIDdigits(const char *fileMIDdigits, con
 
     std::cout << "Number of TF in MID track/digits file: " << timeframeCounter << std::endl;
     std::cout << "Number of selected digit ROFs: " << selectedROFcounter << std::endl;
+
+    // read out histograms
+    auto outFile = new TFile("track_processing.root", "RECREATE");
+
+    TCanvas* nMuonTracksCanvas = new TCanvas("muon_tracks_ROF", "muon_tracks_ROF");
+    nMuonTracksROF->Draw();
+    nMuonTracksCanvas->Write();
+
+    delete outFile;
 
     return midPreClusters;
 }
