@@ -14,6 +14,7 @@
 #include "TPolyLine.h"
 #include "TGraphErrors.h"
 #include "TCanvas.h"
+#include "TLegend.h"
 #include "CommonUtils/ConfigurableParamHelper.h"
 #include "CommonConstants/LHCConstants.h"
 #include "CommonDataFormat/InteractionRecord.h"
@@ -45,29 +46,55 @@ int main() {
 }
 
 void processPreClusters(std::vector<o2::mid::PreCluster> preClustersMID) {
-    TH1D* nStripsCluster = new TH1D("cluster_strip_size", "Number of Strips in MID PreClusters;nStrips/PreCluster;count", 30, 0, 30);
+    // mapping object to extract strip size per column
+    o2::mid::Mapping* mapper = new o2::mid::Mapping();
+
+    // strip size distribution for each chamber
+    std::vector<TH1D*> nStripsClusterBending(o2::mid::detparams::NChambers);
+    std::vector<TH1D*> nStripsClusterNonBending(o2::mid::detparams::NChambers);
+
+    for (int chamber = 0; chamber < o2::mid::detparams::NChambers; chamber++) {
+        nStripsClusterBending[chamber] = new TH1D(Form("cluster_strip_size_bending_%i", chamber), Form("Number of Strips in MID PreClusters for Bending Plane (Chamber = %i);nStrips/PreCluster;count", chamber), 30, 0, 30);
+        nStripsClusterNonBending[chamber] = new TH1D(Form("cluster_strip_size_nonbending_%i", chamber), Form("Number of Strips in MID PreClusters for Non-Bending Plane (Chamber = %i);nStrips/PreCluster;count", chamber), 30, 0, 30);
+    }
 
     for (auto pc : preClustersMID) {
-        // check the plane of the clusters
-        //std::cout << pc.deId << std::endl;
+        // check the chamber of the clusters
+        int clusterChamber = o2::mid::detparams::getChamber(pc.deId);
 
         // determine strip size 
-        int nStripsInBetween;
+        int nStrips;
         if (pc.cathode == 0) { // is the cluster in the bending plane?
-            nStripsInBetween = pc.lastStrip - pc.firstStrip + 16 * (pc.lastLine - pc.firstLine);
-        } else {
-            nStripsInBetween = pc.lastStrip - pc.firstStrip;
+            // std::cout << "first strip: " << (int)(pc.firstStrip) << "; last strip: " << (int)(pc.lastStrip)
+            //             << " - first column: " << (int)pc.firstLine << "; last column: " << (int)pc.lastLine << std::endl;
+            nStrips = (int)(pc.lastStrip - pc.firstStrip + 16 * (pc.lastLine - pc.firstLine)) + 1;
+            nStripsClusterBending[clusterChamber]->Fill(nStrips);
+        } 
+        else {
+            // std::cout << "first strip: " << (int)(pc.firstStrip) << "; last strip: " << (int)(pc.lastStrip)
+            //             << " - first column: " << (int)pc.firstColumn << "; last column: " << (int)pc.lastColumn << std::endl;
+            nStrips = (pc.lastStrip - pc.firstStrip) + 1;
+            for (int column = pc.firstColumn; column < pc.lastColumn; column++) {
+                nStrips += mapper->getNStripsNBP(column, pc.deId);
+            }
+            nStripsClusterNonBending[clusterChamber]->Fill(nStrips);
         }
-
-        nStripsCluster->Fill(nStripsInBetween);
     }
 
     // read out histograms
     auto outFile = new TFile("cluster_size.root", "RECREATE");
 
-    TCanvas* nStripsCanvas = new TCanvas("cluster_strip_size", "cluster_strip_size");
-    nStripsCluster->Draw();
-    nStripsCanvas->Write();
+    for (int chamber = 0; chamber < o2::mid::detparams::NChambers; chamber++) {
+        TCanvas* nStripsBendingCanvas = new TCanvas(Form("cluster_strip_size_bending_%i", chamber), Form("cluster_strip_size_bending_%i", chamber));
+        nStripsClusterBending[chamber]->Draw();
+        nStripsBendingCanvas->Write();
+    }
+
+    for (int chamber = 0; chamber < o2::mid::detparams::NChambers; chamber++) {
+        TCanvas* nStripsNonBendingCanvas = new TCanvas(Form("cluster_strip_size_nonbending_%i", chamber), Form("cluster_strip_size_nonbending_%i", chamber));
+        nStripsClusterNonBending[chamber]->Draw();
+        nStripsNonBendingCanvas->Write();
+    }
 
     delete outFile;
 }
