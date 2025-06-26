@@ -34,12 +34,14 @@ std::tuple<TFile *, TTreeReader *> loadData(const char *fileName, const char *tr
 std::vector<o2::InteractionRecord> processMuonTracks(const char *fileName);
 std::vector<o2::mid::PreCluster> processMIDdigits(const char *fileMIDdigits, const char *fileMIDtracks, std::vector<o2::InteractionRecord> muonTracksIR);
 void processPreClusters(std::vector<o2::mid::PreCluster> preClustersMID);
+int pitchToIndex(int pitch);
+int indexToPitch(int index);
 
 int main() {
     auto muonTracksIR = processMuonTracks("muontracks.root");
 
-    // auto preClustersMID = processMIDdigits("mid-digits-decoded.root", "mid-reco.root", muonTracksIR);
-    auto preClustersMID = processMIDdigits("middigits.root", "mid-reco.root", muonTracksIR); // for MC
+    auto preClustersMID = processMIDdigits("mid-digits-decoded.root", "mid-reco.root", muonTracksIR);
+    //auto preClustersMID = processMIDdigits("middigits.root", "mid-reco.root", muonTracksIR); // for MC
 
     processPreClusters(preClustersMID);
 
@@ -51,60 +53,53 @@ void processPreClusters(std::vector<o2::mid::PreCluster> preClustersMID) {
     o2::mid::Mapping* mapper = new o2::mid::Mapping();
 
     // strip size distribution for each chamber
-    std::vector<TH1D*> nStripsClusterBending(o2::mid::detparams::NChambers);
-    std::vector<TH1D*> nStripsClusterNonBending(o2::mid::detparams::NChambers);
+    const int nPitches = 3;
+    std::vector<TH1D*> nStripsClusterBending(nPitches);
+    std::vector<TH1D*> nStripsClusterNonBending(nPitches);
 
-    for (int chamber = 0; chamber < o2::mid::detparams::NChambers; chamber++) {
-        nStripsClusterBending[chamber] = new TH1D(Form("cluster_strip_size_bending_%i", chamber), Form("Number of Strips in MID PreClusters for Bending Plane (Chamber = %i);nStrips/PreCluster;count", chamber), 30, 0, 30);
-        nStripsClusterNonBending[chamber] = new TH1D(Form("cluster_strip_size_nonbending_%i", chamber), Form("Number of Strips in MID PreClusters for Non-Bending Plane (Chamber = %i);nStrips/PreCluster;count", chamber), 30, 0, 30);
+    for (int index = 0; index < nPitches; index++) {
+        nStripsClusterBending[index] = new TH1D(Form("cluster_strip_size_bending_%i", indexToPitch(index)), Form("Number of Strips in MID PreClusters for Bending Plane (pitch = %i);nStrips/PreCluster;count", indexToPitch(index)), 30, 0, 30);
+        nStripsClusterNonBending[index] = new TH1D(Form("cluster_strip_size_nonbending_%i", indexToPitch(index)), Form("Number of Strips in MID PreClusters for Non-Bending Plane (pitch = %i);nStrips/PreCluster;count", indexToPitch(index)), 30, 0, 30);
     }
 
-    int count_4 = 0;
     for (auto pc : preClustersMID) {
         // check the chamber of the clusters
-        int clusterChamber = o2::mid::detparams::getChamber(pc.deId);
+        // int clusterChamber = o2::mid::detparams::getChamber(pc.deId);
 
         // find the strip pitch 
-        o2::mid::MpArea mpArea = mapper->stripByLocation(pc.lastStrip, pc.cathode, pc.lastLine, pc.lastColumn, pc.deId);
-        int strip_pitch;
+        o2::mid::MpArea mpArea_first = mapper->stripByLocation(pc.firstStrip, pc.cathode, pc.firstLine, pc.firstColumn, pc.deId);
+        o2::mid::MpArea mpArea_last = mapper->stripByLocation(pc.lastStrip, pc.cathode, pc.lastLine, pc.lastColumn, pc.deId);
+        int strip_pitch_first, strip_pitch_last;
 
         // determine strip size 
         int nStrips;
         if (pc.cathode == 0) { // is the cluster in the bending plane?
-            strip_pitch = static_cast<int>(mpArea.getHalfSizeY());
-            if (strip_pitch == 4) count_4++;
-            if (strip_pitch == 0) std::cout << "Number for pitch of 0: " << mpArea.getHalfSizeY() << std::endl;
+            strip_pitch_first = static_cast<int>(2*mpArea_first.getHalfSizeY());
+            strip_pitch_last = static_cast<int>(2*mpArea_last.getHalfSizeY());
 
             nStrips = (int)(pc.lastStrip - pc.firstStrip + 16 * (pc.lastLine - pc.firstLine)) + 1;
-            nStripsClusterBending[clusterChamber]->Fill(nStrips);
+
+            if (strip_pitch_first == strip_pitch_last) nStripsClusterBending[pitchToIndex(strip_pitch_first)]->Fill(nStrips);
         } 
         else {
-            strip_pitch = static_cast<int>(mpArea.getHalfSizeX());
-            if (strip_pitch == 4) count_4++;
-            if (strip_pitch == 0) std::cout << "Number for pitch of 0: " << mpArea.getHalfSizeX() << std::endl;
+            strip_pitch_first = static_cast<int>(2*mpArea_first.getHalfSizeX());
+            strip_pitch_last = static_cast<int>(2*mpArea_last.getHalfSizeX());
 
             nStrips = (pc.lastStrip - pc.firstStrip) + 1;
             for (int column = pc.firstColumn; column < pc.lastColumn; column++) {
                 nStrips += mapper->getNStripsNBP(column, pc.deId);
             }
-            nStripsClusterNonBending[clusterChamber]->Fill(nStrips);
+
+            if (strip_pitch_first == strip_pitch_last) nStripsClusterNonBending[pitchToIndex(strip_pitch_first)]->Fill(nStrips);
         }
     }
-    std::cout << "Number of cluster with pitch of 4: " << count_4 << std::endl;
 
     // read out histograms
     auto outFile = new TFile("cluster_size.root", "RECREATE");
 
-    for (int chamber = 0; chamber < o2::mid::detparams::NChambers; chamber++) {
-        TCanvas* nStripsBendingCanvas = new TCanvas(Form("cluster_strip_size_bending_%i", chamber), Form("cluster_strip_size_bending_%i", chamber));
-        nStripsClusterBending[chamber]->Draw();
-        nStripsBendingCanvas->Write();
-    }
-
-    for (int chamber = 0; chamber < o2::mid::detparams::NChambers; chamber++) {
-        TCanvas* nStripsNonBendingCanvas = new TCanvas(Form("cluster_strip_size_nonbending_%i", chamber), Form("cluster_strip_size_nonbending_%i", chamber));
-        nStripsClusterNonBending[chamber]->Draw();
-        nStripsNonBendingCanvas->Write();
+    for (int index = 0; index < nPitches; index++) {
+        nStripsClusterBending[index]->Write();
+        nStripsClusterNonBending[index]->Write();
     }
 
     delete outFile;
@@ -115,8 +110,8 @@ std::vector<o2::mid::PreCluster> processMIDdigits(const char *fileMIDdigits, con
     TH1D* nMuonTracksROF = new TH1D("muon_track_count_ROF", "Number of MCH+MID matched tracks per ROF;nTracks/ROF;count", 10, 0, 10);
 
     // read in the MID track and digit infomation
-    // auto [digitFile, digitReader] = loadData(fileMIDdigits, "middigits");
-    auto [digitFile, digitReader] = loadData(fileMIDdigits, "o2sim"); // for MC
+    auto [digitFile, digitReader] = loadData(fileMIDdigits, "middigits");
+    //auto [digitFile, digitReader] = loadData(fileMIDdigits, "o2sim"); // for MC
 
     auto [recoFileMID, recoReaderMID] = loadData(fileMIDtracks, "midreco");
 
@@ -238,4 +233,20 @@ std::tuple<TFile *, TTreeReader *> loadData(const char *fileName, const char *tr
     }
 
     return std::make_tuple(file, tr);
+}
+
+int pitchToIndex(int pitch) {
+    int index = -1;
+    if (pitch == 4) index = 2;
+    else index = pitch - 1;
+
+    return index;
+}
+
+int indexToPitch(int index) {
+    int pitch = -1;
+    if (index == 2) pitch = 4;
+    else pitch = index + 1;
+
+    return pitch;
 }
