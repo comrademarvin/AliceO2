@@ -40,8 +40,8 @@ int indexToPitch(int index);
 int main() {
     auto muonTracksIR = processMuonTracks("muontracks.root");
 
-    auto preClustersMID = processMIDdigits("mid-digits-decoded.root", "mid-reco.root", muonTracksIR);
-    //auto preClustersMID = processMIDdigits("middigits.root", "mid-reco.root", muonTracksIR); // for MC
+    //auto preClustersMID = processMIDdigits("mid-digits-decoded.root", "mid-reco.root", muonTracksIR);
+    auto preClustersMID = processMIDdigits("middigits.root", "mid-reco.root", muonTracksIR); // for MC
 
     processPreClusters(preClustersMID);
 
@@ -107,11 +107,12 @@ void processPreClusters(std::vector<o2::mid::PreCluster> preClustersMID) {
 
 std::vector<o2::mid::PreCluster> processMIDdigits(const char *fileMIDdigits, const char *fileMIDtracks, std::vector<o2::InteractionRecord> muonTracksIR) {
     // output histograms
-    TH1D* nMuonTracksROF = new TH1D("muon_track_count_ROF", "Number of MCH+MID matched tracks per ROF;nTracks/ROF;count", 10, 0, 10);
+    TH1D* nMuonTracksROF = new TH1D("muon_track_count_ROF", "Number of MCH+MID matched tracks per ROF;nTracks/ROF;count", 5, 0, 5);
+    TH1D* nMIDTracksROF = new TH1D("mid_track_count_ROF", "Number of MID tracks per ROF;nTracks/ROF;count", 70, 0, 70);
 
     // read in the MID track and digit infomation
-    auto [digitFile, digitReader] = loadData(fileMIDdigits, "middigits");
-    //auto [digitFile, digitReader] = loadData(fileMIDdigits, "o2sim"); // for MC
+    //auto [digitFile, digitReader] = loadData(fileMIDdigits, "middigits");
+    auto [digitFile, digitReader] = loadData(fileMIDdigits, "o2sim"); // for MC
 
     auto [recoFileMID, recoReaderMID] = loadData(fileMIDtracks, "midreco");
 
@@ -147,6 +148,7 @@ std::vector<o2::mid::PreCluster> processMIDdigits(const char *fileMIDdigits, con
             int muonTrackCount = 0;
             auto nTracksMID = trackRofItMID->nEntries; // number of MID tracks for the ROF
             if (nTracksMID > 0) { // first check whether there are any MID tracks for the ROF
+                nMIDTracksROF->Fill(nTracksMID);
                 // secondly check whether there are any matched muon tracks for the ROF
                 auto rofIR = digitRofIt->interactionRecord;
                 for (auto trackIR : muonTracksIR) {
@@ -180,9 +182,8 @@ std::vector<o2::mid::PreCluster> processMIDdigits(const char *fileMIDdigits, con
     // read out histograms
     auto outFile = new TFile("track_processing.root", "RECREATE");
 
-    TCanvas* nMuonTracksCanvas = new TCanvas("muon_tracks_ROF", "muon_tracks_ROF");
-    nMuonTracksROF->Draw();
-    nMuonTracksCanvas->Write();
+    nMIDTracksROF->Write();
+    nMuonTracksROF->Write();
 
     delete outFile;
 
