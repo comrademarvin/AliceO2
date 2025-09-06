@@ -26,14 +26,28 @@
 #include "MIDBase/DetectorParameters.h"
 #include "MIDBase/Mapping.h"
 #include "MIDBase/GeometryTransformer.h"
+#include "MIDBase/GeometryParameters.h"
 #include "MIDClustering/PreClusterizer.h"
 #include "MIDClustering/PreCluster.h"
+#include "MIDSimulation/ChamberResponse.h"
 #include "ReconstructionDataFormats/TrackMCHMID.h"
+
+const int nPitches = 3;
+
+struct clusterSizeHist {
+    uint8_t deId;        ///< Detection element ID
+    uint8_t cathode;     ///< Cathode
+    int pitch;       ///< Strip pitch
+    TH1F* clusterPosition; ///< Histogram of strip positions (x)
+};
+std::vector<clusterSizeHist*> initializeClusterSizeHist();
 
 std::tuple<TFile *, TTreeReader *> loadData(const char *fileName, const char *treeName);
 std::vector<o2::InteractionRecord> processMuonTracks(const char *fileName);
 std::vector<o2::mid::PreCluster> processMIDdigits(const char *fileMIDdigits, const char *fileMIDtracks, std::vector<o2::InteractionRecord> muonTracksIR);
-void processPreClusters(std::vector<o2::mid::PreCluster> preClustersMID);
+std::vector<clusterSizeHist*> processPreClusters(std::vector<o2::mid::PreCluster> preClustersMID);
+void processClusterHist(std::vector<clusterSizeHist*> clusterSizeHistograms);
+
 int pitchToIndex(int pitch);
 int indexToPitch(int index);
 
@@ -43,17 +57,65 @@ int main() {
     //auto preClustersMID = processMIDdigits("mid-digits-decoded.root", "mid-reco.root", muonTracksIR);
     auto preClustersMID = processMIDdigits("middigits.root", "mid-reco.root", muonTracksIR); // for MC
 
-    processPreClusters(preClustersMID);
+    auto clusterSizeHist = processPreClusters(preClustersMID);
+
+    processClusterHist(clusterSizeHist);
 
     return 0;
 }
 
-void processPreClusters(std::vector<o2::mid::PreCluster> preClustersMID) {
+void processClusterHist(std::vector<clusterSizeHist*> clusterSizeHistograms) {
+    if (clusterSizeHistograms.empty()) {
+        std::cout << "No cluster size histograms available." << std::endl;
+        return;
+    }
+
+    // pick first histogram for now (to fit parameters A,B,C)
+    auto baseClusterHist = clusterSizeHistograms[240]; // deId = 48, cathode = 0, pitch = 1
+    baseClusterHist->clusterPosition->Scale(1 / baseClusterHist->clusterPosition->Integral()); // normalize by area
+    
+    // create current PDF for the first hist (using default HV for now)
+    o2::mid::ChamberResponse chamberResp = o2::mid::createDefaultChamberResponse();
+
+    const int nPoints = 100; // Number of points in the grid
+    double distances[nPoints];
+    double firedProbabilities[nPoints];
+
+    for (int i = 0; i < nPoints; ++i) {
+        distances[i] = i; // Distance values from 0 to 1000 in steps of 10
+        firedProbabilities[i] = chamberResp.getFiredProbability(distances[i], baseClusterHist->cathode, baseClusterHist->deId, 0.0);
+    }
+
+    // Create a TGraph to plot the data
+    TGraph* graph = new TGraph(nPoints, distances, firedProbabilities);
+    graph->SetTitle("Fired Probability vs Distance;Distance (mm);Fired Probability");
+    graph->SetLineColor(kRed);
+    graph->SetLineWidth(2);
+
+    // read out histograms
+    auto outFile = new TFile("cluster_hist_fitting.root", "RECREATE");
+
+    // plot first hist and current PDF together as a sanity check
+    TCanvas* canvasCheckFirst = new TCanvas("FiredProbabilityCanvas", "Fired Probability vs Distance", 800, 600);
+    graph->Draw("AL");
+    baseClusterHist->clusterPosition->SetLineColor(kBlack);
+    baseClusterHist->clusterPosition->Draw("SAME");
+    canvasCheckFirst->Write();
+
+    int histCounter = 0;
+    for (auto& hist : clusterSizeHistograms) {
+        hist->clusterPosition->Write(Form("strip_position_de%i_cathode%i_pitch%i_index%i", hist->deId, hist->cathode, hist->pitch, histCounter));
+        histCounter++;
+    }
+
+    delete outFile;
+}
+
+std::vector<clusterSizeHist*> processPreClusters(std::vector<o2::mid::PreCluster> preClustersMID) {
     // mapping object to extract strip size per column
     o2::mid::Mapping* mapper = new o2::mid::Mapping();
 
     // strip size distribution for each chamber
-    const int nPitches = 3;
     std::vector<TH1D*> nStripsClusterBending(nPitches);
     std::vector<TH1D*> nStripsClusterNonBending(nPitches);
 
@@ -62,10 +124,11 @@ void processPreClusters(std::vector<o2::mid::PreCluster> preClustersMID) {
         nStripsClusterNonBending[index] = new TH1D(Form("cluster_strip_size_nonbending_%i", indexToPitch(index)), Form("Number of Strips in MID PreClusters for Non-Bending Plane (pitch = %i);nStrips/PreCluster;count", indexToPitch(index)), 30, 0, 30);
     }
 
-    for (auto pc : preClustersMID) {
-        // check the chamber of the clusters
-        // int clusterChamber = o2::mid::detparams::getChamber(pc.deId);
+    // vector of cluster size histograms for fitting
+    std::vector<clusterSizeHist*> clusterSizeHistograms = initializeClusterSizeHist();
 
+    // loop over preClusters
+    for (auto pc : preClustersMID) {
         // find the strip pitch 
         o2::mid::MpArea mpArea_first = mapper->stripByLocation(pc.firstStrip, pc.cathode, pc.firstLine, pc.firstColumn, pc.deId);
         o2::mid::MpArea mpArea_last = mapper->stripByLocation(pc.lastStrip, pc.cathode, pc.lastLine, pc.lastColumn, pc.deId);
@@ -92,6 +155,20 @@ void processPreClusters(std::vector<o2::mid::PreCluster> preClustersMID) {
 
             if (strip_pitch_first == strip_pitch_last) nStripsClusterNonBending[pitchToIndex(strip_pitch_first)]->Fill(nStrips);
         }
+
+        // fill cluster size histograms
+        if (strip_pitch_first == strip_pitch_last) { // only when the strip pitch is the same for the full cluster
+            for (auto& hist : clusterSizeHistograms) {
+                if (hist->deId == pc.deId && hist->cathode == pc.cathode && hist->pitch == strip_pitch_first) {
+                    // determine cluster position from the centre
+                    int clusterChamber = o2::mid::detparams::getChamber(pc.deId);
+                    double scaleFactor = o2::mid::geoparams::getStripUnitPitchSize(clusterChamber);
+                    double clusterPos = (static_cast<double>(strip_pitch_first) * scaleFactor * static_cast<double>(nStrips) * 10) / 2.0; // position in mm
+                    //if (hist->deId == 0 && hist->cathode == 0 && hist->pitch == 1) std::cout << "Cluster position: " << clusterPos << " mm" << std::endl;
+                    hist->clusterPosition->Fill(clusterPos);
+                }
+            }
+        }
     }
 
     // read out histograms
@@ -103,6 +180,8 @@ void processPreClusters(std::vector<o2::mid::PreCluster> preClustersMID) {
     }
 
     delete outFile;
+
+    return clusterSizeHistograms; // to be used for fitting
 }
 
 std::vector<o2::mid::PreCluster> processMIDdigits(const char *fileMIDdigits, const char *fileMIDtracks, std::vector<o2::InteractionRecord> muonTracksIR) {
@@ -250,4 +329,27 @@ int indexToPitch(int index) {
     else pitch = index + 1;
 
     return pitch;
+}
+
+std::vector<clusterSizeHist*> initializeClusterSizeHist() {
+    // initialize cluster size histograms
+    std::vector<clusterSizeHist*> clusterSizeHistograms;
+
+    // loop over all MID deIds
+    for (int deId = 0; deId < o2::mid::detparams::NDetectionElements; deId++) {
+        for (int cathode = 0; cathode < 2; cathode++) { // 0: bending, 1: non-bending
+            for (int pitch = 0; pitch < nPitches; pitch++) { // strip pitches
+                if (pitch == 0 && cathode == 1) continue; // skip non-bending plane for pitch 1
+                auto hist = new clusterSizeHist();
+                hist->deId = deId;
+                hist->cathode = cathode;
+                hist->pitch = indexToPitch(pitch);
+                hist->clusterPosition = new TH1F(Form("strip_position_de%i_cathode%i_pitch%i", deId, cathode, indexToPitch(pitch)), 
+                                                Form("Strip Position (mm) for DE %i, Cathode %i, Pitch %i", deId, cathode, indexToPitch(pitch)), 50, 0, 100);
+                clusterSizeHistograms.push_back(hist);
+            }
+        }
+    }
+
+    return clusterSizeHistograms;
 }
