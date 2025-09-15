@@ -8,6 +8,7 @@
 #include "TFile.h"
 #include "TTree.h"
 #include "TH1D.h"
+#include "TF1.h"
 #include "TTreeReader.h"
 #include "TTreeReaderValue.h"
 #include "TGeoManager.h"
@@ -64,6 +65,18 @@ int main() {
     return 0;
 }
 
+Double_t pdfFunc(Double_t *x, Double_t *par) // x = position (mm); par = {b, a0, a1, c0, c1, hv}
+{
+    Float_t xx = x[0];
+    double hv = par[5];
+
+    double a = par[2]*hv + par[1]; // a = a1*hv + a0
+    double c = par[4]*hv + par[3]; // c = c1*hv + c0
+    double b = par[0];
+
+    return (1/(1+c))*((a/(a+pow(xx,b)))+c);
+}
+
 void processClusterHist(std::vector<clusterSizeHist*> clusterSizeHistograms) {
     if (clusterSizeHistograms.empty()) {
         std::cout << "No cluster size histograms available." << std::endl;
@@ -74,7 +87,7 @@ void processClusterHist(std::vector<clusterSizeHist*> clusterSizeHistograms) {
     auto baseClusterHist = clusterSizeHistograms[240]; // deId = 48, cathode = 0, pitch = 1
     baseClusterHist->clusterPosition->Scale(1 / baseClusterHist->clusterPosition->Integral()); // normalize by area
     
-    // create current PDF for the first hist (using default HV for now)
+    // create current O2 PDF for the chosen hist (using default HV for now)
     o2::mid::ChamberResponse chamberResp = o2::mid::createDefaultChamberResponse();
 
     const int nPoints = 100; // Number of points in the grid
@@ -82,9 +95,18 @@ void processClusterHist(std::vector<clusterSizeHist*> clusterSizeHistograms) {
     double firedProbabilities[nPoints];
 
     for (int i = 0; i < nPoints; ++i) {
-        distances[i] = i; // Distance values from 0 to 1000 in steps of 10
-        firedProbabilities[i] = chamberResp.getFiredProbability(distances[i], baseClusterHist->cathode, baseClusterHist->deId, 0.0);
+        distances[i] = i; // Distance values from 0 to 100 in steps of 1 in mm
+        firedProbabilities[i] = chamberResp.getFiredProbability(distances[i]/10, baseClusterHist->cathode, baseClusterHist->deId, 0.0); // need to pass in cm
     }
+
+    // define my own fit function
+    auto clusterPDF = new TF1("clusterPDF", pdfFunc, 0, 100, 6);
+    clusterPDF->SetParNames("b", "a0", "a1", "c0", "c1", "hv");
+    clusterPDF->SetParameters(1.97, -52.70, 6.089, -0.5e-3, 8.3e-4, 9.6); // initial parameters
+    clusterPDF->FixParameter(5, 9.6); // Fix the high-voltage parameter
+
+    // access HV values from the CCDB
+    //auto ccdb = o2::ccdb::BasicCCDBManager::getInstance();
 
     // Create a TGraph to plot the data
     TGraph* graph = new TGraph(nPoints, distances, firedProbabilities);
@@ -97,9 +119,14 @@ void processClusterHist(std::vector<clusterSizeHist*> clusterSizeHistograms) {
 
     // plot first hist and current PDF together as a sanity check
     TCanvas* canvasCheckFirst = new TCanvas("FiredProbabilityCanvas", "Fired Probability vs Distance", 800, 600);
-    graph->Draw("AL");
+    gPad->SetLogy();
     baseClusterHist->clusterPosition->SetLineColor(kBlack);
+    baseClusterHist->clusterPosition->SetMaximum(1.0);
+    baseClusterHist->clusterPosition->SetMinimum(0.0001);
     baseClusterHist->clusterPosition->Draw("SAME");
+    graph->Draw("SAME");
+    clusterPDF->SetLineColor(kBlue);
+    clusterPDF->Draw("SAME");
     canvasCheckFirst->Write();
 
     int histCounter = 0;
