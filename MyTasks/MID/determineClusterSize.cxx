@@ -83,9 +83,24 @@ void processClusterHist(std::vector<clusterSizeHist*> clusterSizeHistograms) {
         return;
     }
 
+    // add histograms with same cathode and pitch together
+    std::map<std::tuple<int, int>, TH1F*> combinedHists; // key: (cathode, pitch), value: combined histogram
+    for (auto& hist : clusterSizeHistograms) {
+        auto key = std::make_tuple(hist->cathode, hist->pitch);
+        if (combinedHists.find(key) == combinedHists.end()) {
+            combinedHists[key] = (TH1F*)hist->clusterPosition->Clone(Form("combined_cathode%i_pitch%i", hist->cathode, hist->pitch));
+            combinedHists[key]->SetTitle(Form("Combined Strip Position (mm) for Cathode %i, Pitch %i", hist->cathode, hist->pitch));
+        } else {
+            combinedHists[key]->Add(hist->clusterPosition);
+        }
+    }
+
+    auto testKey = std::make_tuple(0, 1); // using cathode = 0, pitch = 1 as a test
+    baseClusterHist->clusterPosition->Scale(1 / baseClusterHist->clusterPosition->Integral()); // normalize by area
+
     // pick first histogram for now (to fit parameters A,B,C)
     auto baseClusterHist = clusterSizeHistograms[240]; // deId = 48, cathode = 0, pitch = 1
-    baseClusterHist->clusterPosition->Scale(1 / baseClusterHist->clusterPosition->Integral()); // normalize by area
+    combinedHists[testKey]->Scale(1 / combinedHists[testKey]->Integral()); // normalize by area
     
     // create current O2 PDF for the chosen hist (using default HV for now)
     o2::mid::ChamberResponse chamberResp = o2::mid::createDefaultChamberResponse();
@@ -99,20 +114,18 @@ void processClusterHist(std::vector<clusterSizeHist*> clusterSizeHistograms) {
         firedProbabilities[i] = chamberResp.getFiredProbability(distances[i]/10, baseClusterHist->cathode, baseClusterHist->deId, 0.0); // need to pass in cm
     }
 
+    TGraph* graph = new TGraph(nPoints, distances, firedProbabilities);
+
+    // access HV values from the CCDB
+    //auto ccdb = o2::ccdb::BasicCCDBManager::getInstance();
+
     // define my own fit function
     auto clusterPDF = new TF1("clusterPDF", pdfFunc, 0, 100, 6);
     clusterPDF->SetParNames("b", "a0", "a1", "c0", "c1", "hv");
     clusterPDF->SetParameters(1.97, -52.70, 6.089, -0.5e-3, 8.3e-4, 9.6); // initial parameters
     clusterPDF->FixParameter(5, 9.6); // Fix the high-voltage parameter
 
-    // access HV values from the CCDB
-    //auto ccdb = o2::ccdb::BasicCCDBManager::getInstance();
-
-    // Create a TGraph to plot the data
-    TGraph* graph = new TGraph(nPoints, distances, firedProbabilities);
-    graph->SetTitle("Fired Probability vs Distance;Distance (mm);Fired Probability");
-    graph->SetLineColor(kRed);
-    graph->SetLineWidth(2);
+    baseClusterHist->clusterPosition->Fit("clusterPDF", "R", "", 0, 100); // fit in range of 0-100 mm
 
     // read out histograms
     auto outFile = new TFile("cluster_hist_fitting.root", "RECREATE");
@@ -124,10 +137,30 @@ void processClusterHist(std::vector<clusterSizeHist*> clusterSizeHistograms) {
     baseClusterHist->clusterPosition->SetMaximum(1.0);
     baseClusterHist->clusterPosition->SetMinimum(0.0001);
     baseClusterHist->clusterPosition->Draw("SAME");
+
     graph->Draw("SAME");
+    graph->SetLineColor(kRed);
+    graph->SetLineWidth(2);
+
     clusterPDF->SetLineColor(kBlue);
     clusterPDF->Draw("SAME");
     canvasCheckFirst->Write();
+
+    // plot test combined histogram with fit function
+    TCanvas* canvasCheckCombine = new TCanvas("FiredProbabilityCanvasCombined", "Fired Probability vs Distance for cathode = 0 and pitch = 1", 800, 600);
+    gPad->SetLogy();
+    combinedHists[testKey]->SetLineColor(kBlack);
+    combinedHists[testKey]->SetMaximum(1.0);
+    combinedHists[testKey]->SetMinimum(0.0001);
+    combinedHists[testKey]->Draw("SAME");
+
+    graph->Draw("SAME");
+    graph->SetLineColor(kRed);
+    graph->SetLineWidth(2);
+
+    // clusterPDF->SetLineColor(kBlue);
+    // clusterPDF->Draw("SAME");
+    canvasCheckCombine->Write();
 
     int histCounter = 0;
     for (auto& hist : clusterSizeHistograms) {
