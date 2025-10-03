@@ -39,7 +39,9 @@ struct clusterSizeHist {
     uint8_t deId;        ///< Detection element ID
     uint8_t cathode;     ///< Cathode
     int pitch;       ///< Strip pitch
+    int chamber;     ///< Chamber number
     TH1F* clusterPosition; ///< Histogram of strip positions (x)
+    int nClusters;   ///< Number of clusters
 };
 std::vector<clusterSizeHist*> initializeClusterSizeHist();
 
@@ -48,6 +50,7 @@ std::vector<o2::InteractionRecord> processMuonTracks(const char *fileName);
 std::vector<o2::mid::PreCluster> processMIDdigits(const char *fileMIDdigits, const char *fileMIDtracks, std::vector<o2::InteractionRecord> muonTracksIR);
 std::vector<clusterSizeHist*> processPreClusters(std::vector<o2::mid::PreCluster> preClustersMID);
 void processClusterHist(std::vector<clusterSizeHist*> clusterSizeHistograms);
+void fillStripPositions(clusterSizeHist* hist, int nStrips, int pitch);
 
 int pitchToIndex(int pitch);
 int indexToPitch(int index);
@@ -63,6 +66,45 @@ int main() {
     processClusterHist(clusterSizeHist);
 
     return 0;
+}
+
+void fillStripPositions(clusterSizeHist* hist, int nStrips, int pitch) {
+    double scaleFactor = o2::mid::geoparams::getStripUnitPitchSize(hist->chamber);
+
+    double clusterPos; // position in mm
+    div_t nStripsDiv2 = div(nStrips, 2);
+    // number of strips even or odd?
+    if (nStripsDiv2.rem == 0) { // even
+        // assume symmetric
+        for (int strip = 0; strip <= (nStripsDiv2.quot - 1); strip++) {
+            clusterPos = (static_cast<double>(pitch) * scaleFactor * 10) * (static_cast<double>(strip) + 0.5);
+            hist->clusterPosition->Fill(clusterPos);
+            hist->clusterPosition->Fill(clusterPos); // fill twice for assumed symmetry of cluster position distribution
+        }
+        // assumme shifted asymmetry
+        // //hist->clusterPosition->Fill(0.0); // middle strip
+        // for (int strip = 0; strip <= nStripsDiv2.quot; strip++) {
+        //     clusterPos = (static_cast<double>(pitch) * scaleFactor * 10) * static_cast<double>(strip);
+        //     hist->clusterPosition->Fill(clusterPos);
+        //     if (strip != nStripsDiv2.quot) hist->clusterPosition->Fill(clusterPos); // fill once for shifted asymmetry of cluster position distribution
+        // }
+    } else { // odd
+        // assume symmetric
+        // //hist->clusterPosition->Fill(0.0); // middle strip
+        // for (int strip = 0; strip <= nStripsDiv2.quot; strip++) {
+        //     clusterPos = (static_cast<double>(pitch) * scaleFactor * 10) * static_cast<double>(strip);
+        //     hist->clusterPosition->Fill(clusterPos);
+        //     hist->clusterPosition->Fill(clusterPos); // fill twice for assumed symmetry of cluster position distribution
+        // }
+        // assume shifted asymmetry
+        for (int strip = 0; strip <= nStripsDiv2.quot; strip++) {
+            clusterPos = (static_cast<double>(pitch) * scaleFactor * 10) * (static_cast<double>(strip) + 0.5);
+            hist->clusterPosition->Fill(clusterPos);
+            if (strip != nStripsDiv2.quot) hist->clusterPosition->Fill(clusterPos); // fill once for shifted asymmetry of cluster position distribution
+        }
+    }
+
+    hist->nClusters++;
 }
 
 Double_t pdfFunc(Double_t *x, Double_t *par) // x = position (mm); par = {b, a0, a1, c0, c1, hv}
@@ -83,25 +125,31 @@ void processClusterHist(std::vector<clusterSizeHist*> clusterSizeHistograms) {
         return;
     }
 
-    // add histograms with same cathode and pitch together
-    std::map<std::tuple<int, int>, TH1F*> combinedHists; // key: (cathode, pitch), value: combined histogram
+    // add histograms with same cathode and deId together
+    std::map<std::tuple<int, int>, std::pair<TH1F*, int>> combinedHists; // key: (cathode, deId), value: pair of combined histogram and cluster count
     for (auto& hist : clusterSizeHistograms) {
-        auto key = std::make_tuple(hist->cathode, hist->pitch);
+        auto key = std::make_tuple(hist->cathode, hist->deId);
         if (combinedHists.find(key) == combinedHists.end()) {
-            combinedHists[key] = (TH1F*)hist->clusterPosition->Clone(Form("combined_cathode%i_pitch%i", hist->cathode, hist->pitch));
-            combinedHists[key]->SetTitle(Form("Combined Strip Position (mm) for Cathode %i, Pitch %i", hist->cathode, hist->pitch));
+            combinedHists[key] = std::make_pair(
+                (TH1F*)hist->clusterPosition->Clone(Form("combined_cathode%i_deId%i", hist->cathode, hist->deId)),
+                hist->nClusters
+            );
+            combinedHists[key].first->SetTitle(Form("Combined Strip Position (mm) for Cathode %i, DE %i", hist->cathode, hist->deId));
         } else {
-            combinedHists[key]->Add(hist->clusterPosition);
+            combinedHists[key].first->Add(hist->clusterPosition);
+            combinedHists[key].second += hist->nClusters;
         }
     }
 
-    auto testKey = std::make_tuple(0, 1); // using cathode = 0, pitch = 1 as a test
-    baseClusterHist->clusterPosition->Scale(1 / baseClusterHist->clusterPosition->Integral()); // normalize by area
+    auto testKey = std::make_tuple(0, 3); // using cathode = 0, deId = 0 as a test
+    (combinedHists[testKey].first)->Scale(1.0 / (2*static_cast<float>(combinedHists[testKey].second))); // normalize by number of clusters
 
-    // pick first histogram for now (to fit parameters A,B,C)
-    auto baseClusterHist = clusterSizeHistograms[240]; // deId = 48, cathode = 0, pitch = 1
-    combinedHists[testKey]->Scale(1 / combinedHists[testKey]->Integral()); // normalize by area
-    
+    // pick test histogram for now (to fit parameters A,B,C)
+    auto baseClusterHist = clusterSizeHistograms[343]; // index 240: deId = 48, cathode = 0, pitch = 1 | index 343: deId = 68, cathode = 1, pitch = 2
+    //baseClusterHist->clusterPosition->Scale(1.0 / (2*static_cast<float>(baseClusterHist->nClusters))); // normalize by number of clusters
+    baseClusterHist->clusterPosition->Scale(1 / (2*baseClusterHist->clusterPosition->Integral())); // normalize by area + for overcounting due to symmetry assumption
+
+
     // create current O2 PDF for the chosen hist (using default HV for now)
     o2::mid::ChamberResponse chamberResp = o2::mid::createDefaultChamberResponse();
 
@@ -125,7 +173,7 @@ void processClusterHist(std::vector<clusterSizeHist*> clusterSizeHistograms) {
     clusterPDF->SetParameters(1.97, -52.70, 6.089, -0.5e-3, 8.3e-4, 9.6); // initial parameters
     clusterPDF->FixParameter(5, 9.6); // Fix the high-voltage parameter
 
-    baseClusterHist->clusterPosition->Fit("clusterPDF", "R", "", 0, 100); // fit in range of 0-100 mm
+    //baseClusterHist->clusterPosition->Fit("clusterPDF", "R", "", 0, 100); // fit in range of 0-100 mm
 
     // read out histograms
     auto outFile = new TFile("cluster_hist_fitting.root", "RECREATE");
@@ -142,31 +190,70 @@ void processClusterHist(std::vector<clusterSizeHist*> clusterSizeHistograms) {
     graph->SetLineColor(kRed);
     graph->SetLineWidth(2);
 
-    clusterPDF->SetLineColor(kBlue);
-    clusterPDF->Draw("SAME");
     canvasCheckFirst->Write();
 
-    // plot test combined histogram with fit function
-    TCanvas* canvasCheckCombine = new TCanvas("FiredProbabilityCanvasCombined", "Fired Probability vs Distance for cathode = 0 and pitch = 1", 800, 600);
+    // plot test combined histogram with fit function for different b-parameter values
+    TCanvas* canvasCheckCombine = new TCanvas("FiredProbabilityCanvasCombinedB", "Fired Probability vs Distance for cathode = 0 and pitch = 1", 800, 600);
     gPad->SetLogy();
-    combinedHists[testKey]->SetLineColor(kBlack);
-    combinedHists[testKey]->SetMaximum(1.0);
-    combinedHists[testKey]->SetMinimum(0.0001);
-    combinedHists[testKey]->Draw("SAME");
+    (combinedHists[testKey].first)->SetLineColor(kBlack);
+    (combinedHists[testKey].first)->SetMaximum(1.0);
+    (combinedHists[testKey].first)->SetMinimum(0.0001);
+    (combinedHists[testKey].first)->Draw("SAME");
 
-    graph->Draw("SAME");
-    graph->SetLineColor(kRed);
-    graph->SetLineWidth(2);
+    double b_parameter_values[] = {1.97, 2.22, 2.47, 2.97}; // plot the PDF for different b-parameter values
+    int colors[] = {kRed, kBlue, kGreen, kMagenta};
+    TLegend* legend = new TLegend(0.7, 0.7, 0.9, 0.9);
+    legend->SetHeader("b-Parameter Values", "C");
 
-    // clusterPDF->SetLineColor(kBlue);
-    // clusterPDF->Draw("SAME");
+    for (int i = 0; i < 4; ++i) {
+        auto tempPDF = new TF1("tempPDF", pdfFunc, 0, 100, 6);
+        tempPDF->SetParNames("b", "a0", "a1", "c0", "c1", "hv");
+        tempPDF->SetParameters(b_parameter_values[i], -52.70, 6.089, -0.5e-3, 8.3e-4, 9.6); // initial parameters
+        tempPDF->SetLineColor(colors[i]);               
+        tempPDF->SetLineWidth(2);                      
+        tempPDF->Draw("SAME"); // Overlay subsequent functions
+        legend->AddEntry(tempPDF, Form("b = %.2f", b_parameter_values[i]), "l");
+    }
+    legend->Draw("SAME");
+
     canvasCheckCombine->Write();
 
-    int histCounter = 0;
-    for (auto& hist : clusterSizeHistograms) {
-        hist->clusterPosition->Write(Form("strip_position_de%i_cathode%i_pitch%i_index%i", hist->deId, hist->cathode, hist->pitch, histCounter));
-        histCounter++;
+    // plot test combined histogram with fit function for different HV values
+    TCanvas* canvasCheckCombineHV = new TCanvas("FiredProbabilityCanvasCombinedHV", "Fired Probability vs Distance for cathode = 0 and pitch = 1", 800, 600);
+    gPad->SetLogy();
+    (combinedHists[testKey].first)->SetLineColor(kBlack);
+    (combinedHists[testKey].first)->SetMaximum(1.0);
+    (combinedHists[testKey].first)->SetMinimum(0.0001);
+    (combinedHists[testKey].first)->Draw("SAME");
+
+    double hv_values[] = {9.2, 9.4, 9.6, 9.8}; // plot the PDF for different hv values
+    TLegend* legendHV = new TLegend(0.7, 0.7, 0.9, 0.9);
+    legendHV->SetHeader("HV Values (mV)", "C");
+
+    for (int i = 0; i < 4; ++i) {
+        auto tempPDF = new TF1("tempPDF", pdfFunc, 0, 100, 6);
+        tempPDF->SetParNames("b", "a0", "a1", "c0", "c1", "hv");
+        tempPDF->SetParameters(1.97, -52.70, 6.089, -0.5e-3, 8.3e-4, hv_values[i]); // initial parameters
+        tempPDF->SetLineColor(colors[i]);               
+        tempPDF->SetLineWidth(2);                      
+        tempPDF->Draw("SAME"); // Overlay subsequent functions
+        legendHV->AddEntry(tempPDF, Form("HV = %.1f", hv_values[i]), "l");
     }
+    legendHV->Draw("SAME");
+
+    canvasCheckCombineHV->Write();
+
+    int histIndex = 0;
+    for (auto& hist : clusterSizeHistograms) {
+        hist->clusterPosition->Write(Form("strip_position_de%i_cathode%i_pitch%i_index%i", hist->deId, hist->cathode, hist->pitch, histIndex));
+        histIndex++;
+    }
+
+    // for (const auto& [key, value] : combinedHists) {
+    //     int cathode = std::get<0>(key);
+    //     int deId = std::get<1>(key);
+    //     value.first->Write(Form("combined_strip_position_de%i_cathode%i", deId, cathode));
+    // }
 
     delete outFile;
 }
@@ -220,12 +307,8 @@ std::vector<clusterSizeHist*> processPreClusters(std::vector<o2::mid::PreCluster
         if (strip_pitch_first == strip_pitch_last) { // only when the strip pitch is the same for the full cluster
             for (auto& hist : clusterSizeHistograms) {
                 if (hist->deId == pc.deId && hist->cathode == pc.cathode && hist->pitch == strip_pitch_first) {
-                    // determine cluster position from the centre
-                    int clusterChamber = o2::mid::detparams::getChamber(pc.deId);
-                    double scaleFactor = o2::mid::geoparams::getStripUnitPitchSize(clusterChamber);
-                    double clusterPos = (static_cast<double>(strip_pitch_first) * scaleFactor * static_cast<double>(nStrips) * 10) / 2.0; // position in mm
-                    //if (hist->deId == 0 && hist->cathode == 0 && hist->pitch == 1) std::cout << "Cluster position: " << clusterPos << " mm" << std::endl;
-                    hist->clusterPosition->Fill(clusterPos);
+                    fillStripPositions(hist, nStrips, strip_pitch_first);
+                    break;
                 }
             }
         }
@@ -404,6 +487,8 @@ std::vector<clusterSizeHist*> initializeClusterSizeHist() {
                 hist->deId = deId;
                 hist->cathode = cathode;
                 hist->pitch = indexToPitch(pitch);
+                hist->chamber = o2::mid::detparams::getChamber(deId);
+                hist->nClusters = 0;
                 hist->clusterPosition = new TH1F(Form("strip_position_de%i_cathode%i_pitch%i", deId, cathode, indexToPitch(pitch)), 
                                                 Form("Strip Position (mm) for DE %i, Cathode %i, Pitch %i", deId, cathode, indexToPitch(pitch)), 50, 0, 100);
                 clusterSizeHistograms.push_back(hist);
