@@ -72,37 +72,46 @@ void fillStripPositions(clusterSizeHist* hist, int nStrips, int pitch) {
     double scaleFactor = o2::mid::geoparams::getStripUnitPitchSize(hist->chamber);
 
     double clusterPos; // position in mm
-    div_t nStripsDiv2 = div(nStrips, 2);
-    // number of strips even or odd?
-    if (nStripsDiv2.rem == 0) { // even
-        // assume symmetric
-        for (int strip = 0; strip <= (nStripsDiv2.quot - 1); strip++) {
-            clusterPos = (static_cast<double>(pitch) * scaleFactor * 10) * (static_cast<double>(strip) + 0.5);
-            hist->clusterPosition->Fill(clusterPos);
-            hist->clusterPosition->Fill(clusterPos); // fill twice for assumed symmetry of cluster position distribution
-        }
-        // assumme shifted asymmetry
-        // //hist->clusterPosition->Fill(0.0); // middle strip
-        // for (int strip = 0; strip <= nStripsDiv2.quot; strip++) {
-        //     clusterPos = (static_cast<double>(pitch) * scaleFactor * 10) * static_cast<double>(strip);
-        //     hist->clusterPosition->Fill(clusterPos);
-        //     if (strip != nStripsDiv2.quot) hist->clusterPosition->Fill(clusterPos); // fill once for shifted asymmetry of cluster position distribution
-        // }
-    } else { // odd
-        // assume symmetric
-        // //hist->clusterPosition->Fill(0.0); // middle strip
-        // for (int strip = 0; strip <= nStripsDiv2.quot; strip++) {
-        //     clusterPos = (static_cast<double>(pitch) * scaleFactor * 10) * static_cast<double>(strip);
-        //     hist->clusterPosition->Fill(clusterPos);
-        //     hist->clusterPosition->Fill(clusterPos); // fill twice for assumed symmetry of cluster position distribution
-        // }
-        // assume shifted asymmetry
-        for (int strip = 0; strip <= nStripsDiv2.quot; strip++) {
-            clusterPos = (static_cast<double>(pitch) * scaleFactor * 10) * (static_cast<double>(strip) + 0.5);
-            hist->clusterPosition->Fill(clusterPos);
-            if (strip != nStripsDiv2.quot) hist->clusterPosition->Fill(clusterPos); // fill once for shifted asymmetry of cluster position distribution
-        }
+    // second approach
+    for (int strip = 0; strip < nStrips; strip++) {
+        int bin = strip + 1; // Bins are 1-indexed in ROOT histograms
+        double binCenter = hist->clusterPosition->GetBinCenter(bin);
+        hist->clusterPosition->Fill(binCenter);
+        hist->clusterPosition->Fill(binCenter);
     }
+
+    // first approach    
+    // div_t nStripsDiv2 = div(nStrips, 2);
+    // // number of strips even or odd?
+    // if (nStripsDiv2.rem == 0) { // even
+    //     // assume symmetric
+    //     for (int strip = 0; strip <= (nStripsDiv2.quot - 1); strip++) {
+    //         clusterPos = (static_cast<double>(pitch) * scaleFactor * 10) * (static_cast<double>(strip) + 0.5);
+    //         hist->clusterPosition->Fill(clusterPos);
+    //         hist->clusterPosition->Fill(clusterPos); // fill twice for assumed symmetry of cluster position distribution
+    //     }
+    //     // assumme shifted asymmetry
+    //     //hist->clusterPosition->Fill(0.0); // middle strip
+    //     // for (int strip = 0; strip <= nStripsDiv2.quot; strip++) {
+    //     //     clusterPos = (static_cast<double>(pitch) * scaleFactor * 10) * static_cast<double>(strip);
+    //     //     hist->clusterPosition->Fill(clusterPos);
+    //     //     if (strip != nStripsDiv2.quot) hist->clusterPosition->Fill(clusterPos); // fill once for shifted asymmetry of cluster position distribution
+    //     // }
+    // } else { // odd
+    //     // assume symmetric
+    //     //hist->clusterPosition->Fill(0.0); // middle strip
+    //     for (int strip = 0; strip <= nStripsDiv2.quot; strip++) {
+    //         clusterPos = (static_cast<double>(pitch) * scaleFactor * 10) * static_cast<double>(strip);
+    //         hist->clusterPosition->Fill(clusterPos);
+    //         hist->clusterPosition->Fill(clusterPos); // fill twice for assumed symmetry of cluster position distribution
+    //     }
+    //     // // assume shifted asymmetry
+    //     // for (int strip = 0; strip <= nStripsDiv2.quot; strip++) {
+    //     //     clusterPos = (static_cast<double>(pitch) * scaleFactor * 10) * (static_cast<double>(strip) + 0.5);
+    //     //     hist->clusterPosition->Fill(clusterPos);
+    //     //     if (strip != nStripsDiv2.quot) hist->clusterPosition->Fill(clusterPos); // fill once for shifted asymmetry of cluster position distribution
+    //     // }
+    // }
 
     hist->nClusters++;
 }
@@ -142,12 +151,12 @@ void processClusterHist(std::vector<clusterSizeHist*> clusterSizeHistograms) {
     }
 
     auto testKey = std::make_tuple(0, 3); // using cathode = 0, deId = 0 as a test
-    (combinedHists[testKey].first)->Scale(1.0 / (2*static_cast<float>(combinedHists[testKey].second))); // normalize by number of clusters
+    (combinedHists[testKey].first)->Scale(1.0 / (static_cast<float>(combinedHists[testKey].second)), "width"); // normalize by number of clusters
 
     // pick test histogram for now (to fit parameters A,B,C)
     auto baseClusterHist = clusterSizeHistograms[343]; // index 240: deId = 48, cathode = 0, pitch = 1 | index 343: deId = 68, cathode = 1, pitch = 2
-    //baseClusterHist->clusterPosition->Scale(1.0 / (2*static_cast<float>(baseClusterHist->nClusters))); // normalize by number of clusters
-    baseClusterHist->clusterPosition->Scale(1 / (2*baseClusterHist->clusterPosition->Integral())); // normalize by area + for overcounting due to symmetry assumption
+    baseClusterHist->clusterPosition->Scale(1.0 / (static_cast<float>(baseClusterHist->nClusters)), "width"); // normalize by number of clusters
+    //baseClusterHist->clusterPosition->Scale(1 / (2*baseClusterHist->clusterPosition->Integral())); // normalize by area + for overcounting due to symmetry assumption
 
 
     // create current O2 PDF for the chosen hist (using default HV for now)
@@ -489,8 +498,13 @@ std::vector<clusterSizeHist*> initializeClusterSizeHist() {
                 hist->pitch = indexToPitch(pitch);
                 hist->chamber = o2::mid::detparams::getChamber(deId);
                 hist->nClusters = 0;
+
+                Double_t stripWidth = o2::mid::geoparams::getStripUnitPitchSize(hist->chamber) * static_cast<Double_t>(hist->pitch) * 10; // in mm
+                const Int_t nBins = 10;
+                Double_t binEdges[nBins + 1] = {0.0, 0.5*stripWidth, 1.0*stripWidth, 1.5*stripWidth, 2.0*stripWidth, 2.5*stripWidth, 
+                                                3.0*stripWidth, 3.5*stripWidth, 4.0*stripWidth, 4.5*stripWidth, 5.0*stripWidth}; // fraction of strip widths for bins
                 hist->clusterPosition = new TH1F(Form("strip_position_de%i_cathode%i_pitch%i", deId, cathode, indexToPitch(pitch)), 
-                                                Form("Strip Position (mm) for DE %i, Cathode %i, Pitch %i", deId, cathode, indexToPitch(pitch)), 50, 0, 100);
+                                                Form("Strip Position (mm) for DE %i, Cathode %i, Pitch %i", deId, cathode, indexToPitch(pitch)), nBins, binEdges);
                 clusterSizeHistograms.push_back(hist);
             }
         }
