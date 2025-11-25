@@ -172,18 +172,18 @@ void processClusterHist(std::vector<clusterSizeHist*> clusterSizeHistograms) {
         for (int i = 0; i < 7; ++i) clusterPDF_current->FixParameter(i, clusterPDF_current->GetParameter(i)); // fix all parameters (for comparison only)
 
         // define my own fit function
-        auto clusterPDF_fit = new TF1(Form("clusterPDF_fit_de%i_cathode%i_pitch%i", clusterHist->deId, clusterHist->cathode, clusterHist->pitch), pdfFunc, 0, xMax, 7);
-        clusterPDF_fit->SetParNames("b", "a0", "a1", "c0", "c1", "hv", "theta");
-        clusterPDF_fit->SetParameters(chamberRespParam.getParB(clusterHist->cathode, clusterHist->deId), -52.70, 6.089, -0.5e-3, 8.3e-4, HV_value, 0.0); // initial parameters
-        //for (int i = 0; i < 7; ++i) clusterPDF_fit->FixParameter(i, clusterPDF_fit->GetParameter(i)); // fix all parameters (for comparison only)
-        //for (int i = 1; i < 7; ++i) clusterPDF_fit->FixParameter(i, clusterPDF_fit->GetParameter(i)); // fix all except 'b'
-        clusterPDF_fit->FixParameter(5, HV_value); // fix HV parameter
-        clusterPDF_fit->FixParameter(6, 0.0); // fix theta parameter
+        // auto clusterPDF_fit = new TF1(Form("clusterPDF_fit_de%i_cathode%i_pitch%i", clusterHist->deId, clusterHist->cathode, clusterHist->pitch), pdfFunc, 0, xMax, 7);
+        // clusterPDF_fit->SetParNames("b", "a0", "a1", "c0", "c1", "hv", "theta");
+        // clusterPDF_fit->SetParameters(chamberRespParam.getParB(clusterHist->cathode, clusterHist->deId), -52.70, 6.089, -0.5e-3, 8.3e-4, HV_value, 0.0); // initial parameters
+        // //for (int i = 0; i < 7; ++i) clusterPDF_fit->FixParameter(i, clusterPDF_fit->GetParameter(i)); // fix all parameters (for comparison only)
+        // //for (int i = 1; i < 7; ++i) clusterPDF_fit->FixParameter(i, clusterPDF_fit->GetParameter(i)); // fix all except 'b'
+        // clusterPDF_fit->FixParameter(5, HV_value); // fix HV parameter
+        // clusterPDF_fit->FixParameter(6, 0.0); // fix theta parameter
 
-        // fit the histogram with the PDF
-        double fitMin = clusterHist->clusterPosition->GetBinLowEdge(1); // Lower edge of the first bin
-        double fitMax = clusterHist->clusterPosition->GetBinLowEdge(17); // Lower edge of the seventeenth bin (end of the first 16 bins)
-        clusterHist->clusterPosition->Fit(Form("clusterPDF_fit_de%i_cathode%i_pitch%i", clusterHist->deId, clusterHist->cathode, clusterHist->pitch), "R", "", fitMin, fitMax);
+        // // fit the histogram with the PDF
+        // double fitMin = clusterHist->clusterPosition->GetBinLowEdge(1); // Lower edge of the first bin
+        // double fitMax = clusterHist->clusterPosition->GetBinLowEdge(17); // Lower edge of the seventeenth bin (end of the first 16 bins)
+        // clusterHist->clusterPosition->Fit(Form("clusterPDF_fit_de%i_cathode%i_pitch%i", clusterHist->deId, clusterHist->cathode, clusterHist->pitch), "R", "", fitMin, fitMax);
 
         // plot first hist, current PDF, and fitted function together
         TCanvas* canvasCheckFirst = new TCanvas(Form("strip_position_de%i_cathode%i_pitch%i", clusterHist->deId, clusterHist->cathode, clusterHist->pitch), "Fired Probability vs Distance", 800, 600);
@@ -197,15 +197,15 @@ void processClusterHist(std::vector<clusterSizeHist*> clusterSizeHistograms) {
         clusterPDF_current->SetLineWidth(2);
         clusterPDF_current->DrawClone("SAME");
 
-        clusterPDF_fit->SetLineColor(kBlue);
-        clusterPDF_fit->SetLineWidth(2);
-        clusterPDF_fit->DrawClone("SAME");
+        // clusterPDF_fit->SetLineColor(kBlue);
+        // clusterPDF_fit->SetLineWidth(2);
+        // clusterPDF_fit->DrawClone("SAME");
 
         // Add a legend
         TLegend* legend = new TLegend(0.6, 0.7, 0.9, 0.9);
         legend->AddEntry(clusterHist->clusterPosition, "Data (Run 3)", "l");
         legend->AddEntry(clusterPDF_current, "Current O2 PDF (Run 2)", "l");
-        legend->AddEntry(clusterPDF_fit, "Fitted PDF", "l");
+        //legend->AddEntry(clusterPDF_fit, "Fitted PDF", "l");
         legend->Draw("SAME");
 
         canvasCheckFirst->Write();
@@ -389,7 +389,10 @@ std::vector<o2::mid::PreCluster> processMIDdigits(const char *fileMIDdigits, con
                 // run pre-clusterizer on the event digits
                 preClusterizer.process(eventDigits);
                 auto preClusters = preClusterizer.getPreClusters();
-                for (auto& pc : preClusters) midPreClusters.push_back(pc);
+
+                for (auto& pc : preClusters)  {
+                    midPreClusters.push_back(pc);   
+                }
 
                 selectedROFcounter++;
             }
