@@ -71,7 +71,7 @@ std::vector<clusterPosHist*> initializeClusterPosHist();
 
 std::tuple<TFile *, TTreeReader *> loadData(const char *fileName, const char *treeName);
 std::vector<o2::InteractionRecord> processMuonTracks(const char *fileName);
-std::vector<cluster*> processMIDdigits(const char *fileMIDdigits, const char *fileMIDtracks, std::vector<o2::InteractionRecord> muonTracksIR, bool isMC);
+std::vector<cluster*> processMIDdigits(const char *fileMIDdigits, const char *fileMIDtracks, std::vector<o2::InteractionRecord> muonTracksIR, bool isMC, bool removeMultColumns = true);
 cluster* processPreCluster(int rofID, o2::mid::PreCluster pc, o2::mid::Mapping* mapper);
 std::vector<clusterPosHist*> processClustersPosition(std::vector<cluster*> midClusters);
 void processClustersSize(std::vector<cluster*> midClusters);
@@ -93,7 +93,7 @@ int main(int argc, char* argv[]) {
 
     const char* midDigitsFile = isMC ? "middigits.root" : "mid-digits-decoded.root";
 
-    auto midClusters = processMIDdigits(midDigitsFile, "mid-reco.root", muonTracksIR, isMC);
+    auto midClusters = processMIDdigits(midDigitsFile, "mid-reco.root", muonTracksIR, isMC, true);
 
     processClustersSize(midClusters);
 
@@ -365,7 +365,7 @@ cluster* processPreCluster(int rofID, o2::mid::PreCluster pc, o2::mid::Mapping* 
     return processedCluster;
 }
 
-std::vector<cluster*> processMIDdigits(const char *fileMIDdigits, const char *fileMIDtracks, std::vector<o2::InteractionRecord> muonTracksIR, bool isMC) {
+std::vector<cluster*> processMIDdigits(const char *fileMIDdigits, const char *fileMIDtracks, std::vector<o2::InteractionRecord> muonTracksIR, bool isMC, bool removeMultColumns) {
     // output histograms
     TH1D* nMuonTracksROF = new TH1D("muon_track_count_ROF", "Number of MCH+MID matched tracks per ROF;nTracks/ROF;count", 5, 0, 5);
     TH1D* nMIDTracksROF = new TH1D("mid_track_count_ROF", "Number of MID tracks per ROF;nTracks/ROF;count", 70, 0, 70);
@@ -429,11 +429,23 @@ std::vector<cluster*> processMIDdigits(const char *fileMIDdigits, const char *fi
                 preClusterizer.process(eventDigits);
                 auto preClusters = preClusterizer.getPreClusters();
 
-                //bool bendingClusterPicker[nPitches][o2::mid::detparams::NDetectionElements] = {{false}}; // to pick only one bending plane cluster per pitch and DE
+                bool bendingClusterPicker[nPitches][o2::mid::detparams::NDetectionElements] = {{false}}; // to pick only one bending plane cluster per pitch and DE
 
                 for (auto& pc : preClusters)  { // process pre-clusters
                     cluster* processedCluster = processPreCluster(selectedROFcounter, pc, mapper);
-                    if (processedCluster != NULL) midClusters.push_back(processedCluster);
+                    if (processedCluster != NULL) {
+                        if (processedCluster->cathode == 0 && removeMultColumns) { // bending plane
+                            int pitchIndex = pitchToIndex(processedCluster->pitch);
+                            if (!bendingClusterPicker[pitchIndex][processedCluster->deId]) {
+                                midClusters.push_back(processedCluster);
+                                bendingClusterPicker[pitchIndex][processedCluster->deId] = true;
+                            } else {
+                                delete processedCluster; // already have a cluster for this pitch and DE in this ROF
+                            }
+                        } else { // non-bending plane or no removal of multiple columns
+                            midClusters.push_back(processedCluster);
+                        }
+                    }
                 }
 
                 selectedROFcounter++;
