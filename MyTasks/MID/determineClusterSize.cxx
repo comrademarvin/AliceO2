@@ -41,8 +41,25 @@ using DPVAL = o2::dcs::DataPointValue;
 using DPMAP = std::unordered_map<DPID, std::vector<DPVAL>>;
 
 const int nPitches = 3;
+int pitchToIndex(int pitch);
+int indexToPitch(int index);
+
+struct cluster {
+    int rofID;
+    int cathode;
+    int deId;
+    int pitch;
+    int nStrips;
+};
 
 struct clusterSizeHist {
+    uint8_t cathode;     ///< Cathode (Bending = 0; Non-bending = 1)
+    int pitch;       ///< Strip pitch
+    TH1D* clusterSize; ///< Histogram of strip positions (x)
+};
+std::vector<clusterSizeHist*> initializeClusterSizeHist();
+
+struct clusterPosHist {
     uint8_t deId;        ///< Detection element ID
     uint8_t cathode;     ///< Cathode
     int pitch;       ///< Strip pitch
@@ -50,35 +67,44 @@ struct clusterSizeHist {
     TH1F* clusterPosition; ///< Histogram of strip positions (x)
     int nClusters;   ///< Number of clusters
 };
-std::vector<clusterSizeHist*> initializeClusterSizeHist();
+std::vector<clusterPosHist*> initializeClusterPosHist();
 
 std::tuple<TFile *, TTreeReader *> loadData(const char *fileName, const char *treeName);
 std::vector<o2::InteractionRecord> processMuonTracks(const char *fileName);
-std::vector<o2::mid::PreCluster> processMIDdigits(const char *fileMIDdigits, const char *fileMIDtracks, std::vector<o2::InteractionRecord> muonTracksIR);
-std::vector<clusterSizeHist*> processPreClusters(std::vector<o2::mid::PreCluster> preClustersMID);
-void processClusterHist(std::vector<clusterSizeHist*> clusterSizeHistograms);
-void fillStripPositions(clusterSizeHist* hist, int nStrips, int pitch);
+std::vector<cluster*> processMIDdigits(const char *fileMIDdigits, const char *fileMIDtracks, std::vector<o2::InteractionRecord> muonTracksIR, bool isMC);
+cluster* processPreCluster(int rofID, o2::mid::PreCluster pc, o2::mid::Mapping* mapper);
+std::vector<clusterPosHist*> processClustersPosition(std::vector<cluster*> midClusters);
+void processClustersSize(std::vector<cluster*> midClusters);
+void processClusterPosHist(std::vector<clusterPosHist*> clusterPosHistograms);
+void fillStripPositions(clusterPosHist* hist, int nStrips, int pitch);
 DPMAP* accessHVObjectCCDB(int runNumber);
 float accessHVperDE(DPMAP* HV_map, int deId);
 float sum(float s, o2::dcs::DataPointValue v);
 
-int pitchToIndex(int pitch);
-int indexToPitch(int index);
+int main(int argc, char* argv[]) {
+    // Check if the 'isMC' parameter is passed
+    if (argc < 2) {
+        std::cerr << "Usage: " << argv[0] << " <isMC: 0 or 1>" << std::endl;
+        return -1;
+    }
+    bool isMC = std::stoi(argv[1]) != 0;
 
-int main() {
     auto muonTracksIR = processMuonTracks("muontracks.root");
 
-    //auto preClustersMID = processMIDdigits("mid-digits-decoded.root", "mid-reco.root", muonTracksIR); // for data
-    auto preClustersMID = processMIDdigits("middigits.root", "mid-reco.root", muonTracksIR); // for MC
+    const char* midDigitsFile = isMC ? "middigits.root" : "mid-digits-decoded.root";
 
-    auto clusterSizeHist = processPreClusters(preClustersMID);
+    auto midClusters = processMIDdigits(midDigitsFile, "mid-reco.root", muonTracksIR, isMC);
 
-    processClusterHist(clusterSizeHist);
+    processClustersSize(midClusters);
+
+    auto clusterPosHist = processClustersPosition(midClusters);
+
+    processClusterPosHist(clusterPosHist);
 
     return 0;
 }
 
-void fillStripPositions(clusterSizeHist* hist, int nStrips, int pitch) {
+void fillStripPositions(clusterPosHist* hist, int nStrips, int pitch) {
     double scaleFactor = o2::mid::geoparams::getStripUnitPitchSize(hist->chamber);
 
     double clusterPos; // position in mm
@@ -138,8 +164,8 @@ Double_t pdfFunc(Double_t *x, Double_t *par) // x = position (mm); par = {b, a0,
     return (1/(1+c)) * ((a / (a + (pow(xx,b)*costheta))) + c);
 }
 
-void processClusterHist(std::vector<clusterSizeHist*> clusterSizeHistograms) {
-    if (clusterSizeHistograms.empty()) {
+void processClusterPosHist(std::vector<clusterPosHist*> clusterPosHistograms) {
+    if (clusterPosHistograms.empty()) {
         std::cout << "No cluster size histograms available." << std::endl;
         return;
     }
@@ -153,7 +179,7 @@ void processClusterHist(std::vector<clusterSizeHist*> clusterSizeHistograms) {
     // create current O2 PDF and parameters for comparison and fitting
     o2::mid::ChamberResponseParams chamberRespParam = o2::mid::createDefaultChamberResponseParams();
     
-    for (auto clusterHist : clusterSizeHistograms) {
+    for (auto clusterHist : clusterPosHistograms) {
         if (clusterHist->nClusters == 0) continue; // skip empty histograms
 
         clusterHist->clusterPosition->Scale(1.0 / (static_cast<float>(clusterHist->nClusters))); // normalize by number of clusters
@@ -168,7 +194,7 @@ void processClusterHist(std::vector<clusterSizeHist*> clusterSizeHistograms) {
         // define current PDF for comparison
         auto clusterPDF_current = new TF1(Form("clusterPDF_current_de%i_cathode%i_pitch%i", clusterHist->deId, clusterHist->cathode, clusterHist->pitch), pdfFunc, 0, xMax, 7);
         clusterPDF_current->SetParNames("b", "a0", "a1", "c0", "c1", "hv", "theta");
-        clusterPDF_current->SetParameters(chamberRespParam.getParB(clusterHist->cathode, clusterHist->deId), -52.70, 6.089, -0.5e-3, 8.3e-4, HV_value, 0.0); // current parameters
+        clusterPDF_current->SetParameters(chamberRespParam.getParB(clusterHist->cathode, clusterHist->deId), -52.70, 6.089, -0.5e-3, 8.3e-4, 9.6, 0.0); // current parameters
         for (int i = 0; i < 7; ++i) clusterPDF_current->FixParameter(i, clusterPDF_current->GetParameter(i)); // fix all parameters (for comparison only)
 
         // define my own fit function
@@ -253,90 +279,100 @@ DPMAP* accessHVObjectCCDB(int runNumber) {
     return HV_map;
 }
 
-std::vector<clusterSizeHist*> processPreClusters(std::vector<o2::mid::PreCluster> preClustersMID) {
-    // mapping object to extract strip size per column
-    o2::mid::Mapping* mapper = new o2::mid::Mapping();
-
-    // strip size distribution for each chamber
-    std::vector<TH1D*> nStripsClusterBending(nPitches);
-    std::vector<TH1D*> nStripsClusterNonBending(nPitches);
-
-    for (int index = 0; index < nPitches; index++) {
-        nStripsClusterBending[index] = new TH1D(Form("cluster_strip_size_bending_%i", indexToPitch(index)), Form("Number of Strips in MID PreClusters for Bending Plane (pitch = %i);nStrips/PreCluster;count", indexToPitch(index)), 30, 0, 30);
-        nStripsClusterNonBending[index] = new TH1D(Form("cluster_strip_size_nonbending_%i", indexToPitch(index)), Form("Number of Strips in MID PreClusters for Non-Bending Plane (pitch = %i);nStrips/PreCluster;count", indexToPitch(index)), 30, 0, 30);
-    }
-
+void processClustersSize(std::vector<cluster*> midClusters) {
     // vector of cluster size histograms for fitting
     std::vector<clusterSizeHist*> clusterSizeHistograms = initializeClusterSizeHist();
 
     // loop over preClusters
-    for (auto pc : preClustersMID) {
-        // find the strip pitch 
-        o2::mid::MpArea mpArea_first = mapper->stripByLocation(pc.firstStrip, pc.cathode, pc.firstLine, pc.firstColumn, pc.deId);
-        o2::mid::MpArea mpArea_last = mapper->stripByLocation(pc.lastStrip, pc.cathode, pc.lastLine, pc.lastColumn, pc.deId);
-        int strip_pitch_first, strip_pitch_last;
-
-        // determine strip size 
-        int nStrips;
-        if (pc.cathode == 0) { // is the cluster in the bending plane?
-            if (pc.firstColumn != pc.lastColumn) continue;
-            //if (pc.firstColumn != 4) continue; // check only one column for testing
-
-            strip_pitch_first = static_cast<int>(2*mpArea_first.getHalfSizeY());
-            strip_pitch_last = static_cast<int>(2*mpArea_last.getHalfSizeY());
-
-            if (strip_pitch_first != strip_pitch_last) continue;
-
-            nStrips = ((int)pc.lastStrip - (int)pc.firstStrip) + (16 * ((int)pc.lastLine - (int)pc.firstLine)) + 1;
-            // if (((int)pc.lastLine - (int)pc.firstLine) > 1) std::cout << "nStrips: " << nStrips << ", First line: " << (int)pc.firstLine << ", Last line: " << (int)pc.lastLine 
-            //                                                 << ", First strip: " << (int)pc.firstStrip << ", Last strip: " << (int)pc.lastStrip << ", in DE: " << (int)pc.deId << std::endl;
-
-            nStripsClusterBending[pitchToIndex(strip_pitch_first)]->Fill(nStrips);
-        } 
-        else {
-            strip_pitch_first = static_cast<int>(2*mpArea_first.getHalfSizeX());
-            strip_pitch_last = static_cast<int>(2*mpArea_last.getHalfSizeX());
-            
-            if (strip_pitch_first != strip_pitch_last) continue;
-
-            nStrips = (pc.lastStrip - pc.firstStrip) + 1;
-            for (int column = pc.firstColumn; column < pc.lastColumn; column++) {
-                nStrips += mapper->getNStripsNBP(column, pc.deId);
-            }
-
-            nStripsClusterNonBending[pitchToIndex(strip_pitch_first)]->Fill(nStrips);
-        }
-
+    for (auto cluster : midClusters) {
         // fill cluster size histograms
         for (auto& hist : clusterSizeHistograms) {
-            if (hist->deId == pc.deId && hist->cathode == pc.cathode && hist->pitch == strip_pitch_first) {
-                fillStripPositions(hist, nStrips, strip_pitch_first);
+            if (hist->cathode == cluster->cathode && hist->pitch == cluster->pitch) {
+                hist->clusterSize->Fill(cluster->nStrips);
                 break;
             }
         }
     }
 
     // read out histograms
-    auto outFile = new TFile("cluster_size.root", "RECREATE");
+    auto outFile = new TFile("cluster_size_histograms.root", "RECREATE");
 
-    for (int index = 0; index < nPitches; index++) {
-        nStripsClusterBending[index]->Write();
-        nStripsClusterNonBending[index]->Write();
+    for (auto hist : clusterSizeHistograms) {
+        TCanvas* canvas = new TCanvas(Form("cluster_size_cathode%i_pitch%i", hist->cathode, hist->pitch), "", 800, 600);
+        canvas->SetLogy(); // Set y-axis to log scale
+        hist->clusterSize->Draw("E1"); // Draw histogram with error bars and horizontal lines
+        canvas->Write(); // Write the canvas to the output file
     }
 
     delete outFile;
-
-    return clusterSizeHistograms; // to be used for fitting
 }
 
-std::vector<o2::mid::PreCluster> processMIDdigits(const char *fileMIDdigits, const char *fileMIDtracks, std::vector<o2::InteractionRecord> muonTracksIR) {
+std::vector<clusterPosHist*> processClustersPosition(std::vector<cluster*> midClusters) {
+    // vector of cluster size histograms for fitting
+    std::vector<clusterPosHist*> clusterPosHistograms = initializeClusterPosHist();
+
+    // loop over preClusters
+    for (auto cluster : midClusters) {
+        // fill cluster size histograms
+        for (auto& hist : clusterPosHistograms) {
+            if (hist->deId == cluster->deId && hist->cathode == cluster->cathode && hist->pitch == cluster->pitch) {
+                fillStripPositions(hist, cluster->nStrips, cluster->pitch);
+                break;
+            }
+        }
+    }
+
+    return clusterPosHistograms; // to be used for fitting
+}
+
+cluster* processPreCluster(int rofID, o2::mid::PreCluster pc, o2::mid::Mapping* mapper) {
+    // find the strip pitch 
+    o2::mid::MpArea mpArea_first = mapper->stripByLocation(pc.firstStrip, pc.cathode, pc.firstLine, pc.firstColumn, pc.deId);
+    o2::mid::MpArea mpArea_last = mapper->stripByLocation(pc.lastStrip, pc.cathode, pc.lastLine, pc.lastColumn, pc.deId);
+    int strip_pitch_first, strip_pitch_last;
+
+    // determine strip size 
+    int nStrips;
+    if (pc.cathode == 0) { // is the cluster in the bending plane?
+        if (pc.firstColumn != pc.lastColumn) return NULL; // should not happen (different cluster per column)
+
+        strip_pitch_first = static_cast<int>(2*mpArea_first.getHalfSizeY());
+        strip_pitch_last = static_cast<int>(2*mpArea_last.getHalfSizeY());
+
+        if (strip_pitch_first != strip_pitch_last) return NULL;
+
+        nStrips = ((int)pc.lastStrip - (int)pc.firstStrip) + (16 * ((int)pc.lastLine - (int)pc.firstLine)) + 1;
+    } 
+    else {
+        strip_pitch_first = static_cast<int>(2*mpArea_first.getHalfSizeX());
+        strip_pitch_last = static_cast<int>(2*mpArea_last.getHalfSizeX());
+        
+        if (strip_pitch_first != strip_pitch_last) return NULL;
+
+        nStrips = (pc.lastStrip - pc.firstStrip) + 1;
+        for (int column = pc.firstColumn; column < pc.lastColumn; column++) {
+            nStrips += mapper->getNStripsNBP(column, pc.deId);
+        }
+    }
+
+    cluster* processedCluster = new cluster();
+    processedCluster->rofID = rofID;
+    processedCluster->cathode = pc.cathode;
+    processedCluster->deId = pc.deId;
+    processedCluster->pitch = strip_pitch_first;
+    processedCluster->nStrips = nStrips;
+
+    return processedCluster;
+}
+
+std::vector<cluster*> processMIDdigits(const char *fileMIDdigits, const char *fileMIDtracks, std::vector<o2::InteractionRecord> muonTracksIR, bool isMC) {
     // output histograms
     TH1D* nMuonTracksROF = new TH1D("muon_track_count_ROF", "Number of MCH+MID matched tracks per ROF;nTracks/ROF;count", 5, 0, 5);
     TH1D* nMIDTracksROF = new TH1D("mid_track_count_ROF", "Number of MID tracks per ROF;nTracks/ROF;count", 70, 0, 70);
 
     // read in the MID track and digit infomation
-    //auto [digitFile, digitReader] = loadData(fileMIDdigits, "middigits"); // for data
-    auto [digitFile, digitReader] = loadData(fileMIDdigits, "o2sim"); // for MC
+    const char* treeNameDigits = isMC ? "o2sim" : "middigits";
+    auto [digitFile, digitReader] = loadData(fileMIDdigits, treeNameDigits);
 
     auto [recoFileMID, recoReaderMID] = loadData(fileMIDtracks, "midreco");
 
@@ -356,8 +392,11 @@ std::vector<o2::mid::PreCluster> processMIDdigits(const char *fileMIDdigits, con
     // preclusterizer for MID event digits
     o2::mid::PreClusterizer preClusterizer;
 
+    // mapping object to extract strip size per column
+    o2::mid::Mapping* mapper = new o2::mid::Mapping();
+
     // vector of MID preClusters
-    std::vector<o2::mid::PreCluster> midPreClusters;
+    std::vector<cluster*> midClusters;
 
     // itterate over entries, where each entry is a TF
     int timeframeCounter = 0;
@@ -390,8 +429,11 @@ std::vector<o2::mid::PreCluster> processMIDdigits(const char *fileMIDdigits, con
                 preClusterizer.process(eventDigits);
                 auto preClusters = preClusterizer.getPreClusters();
 
-                for (auto& pc : preClusters)  {
-                    midPreClusters.push_back(pc);   
+                //bool bendingClusterPicker[nPitches][o2::mid::detparams::NDetectionElements] = {{false}}; // to pick only one bending plane cluster per pitch and DE
+
+                for (auto& pc : preClusters)  { // process pre-clusters
+                    cluster* processedCluster = processPreCluster(selectedROFcounter, pc, mapper);
+                    if (processedCluster != NULL) midClusters.push_back(processedCluster);
                 }
 
                 selectedROFcounter++;
@@ -414,7 +456,7 @@ std::vector<o2::mid::PreCluster> processMIDdigits(const char *fileMIDdigits, con
 
     delete outFile;
 
-    return midPreClusters;
+    return midClusters;
 }
 
 std::vector<o2::InteractionRecord> processMuonTracks(const char *fileName) {
@@ -483,12 +525,34 @@ std::vector<clusterSizeHist*> initializeClusterSizeHist() {
     // initialize cluster size histograms
     std::vector<clusterSizeHist*> clusterSizeHistograms;
 
+    // loop over cathodes and strip pitches
+    for (int cathode = 0; cathode < 2; cathode++) { // 0: bending, 1: non-bending
+        for (int pitch = 0; pitch < nPitches; pitch++) { // strip pitches
+            if (pitch == 0 && cathode == 1) continue; // skip non-bending plane for pitch 1
+            auto hist = new clusterSizeHist();
+            hist->cathode = cathode;
+            hist->pitch = indexToPitch(pitch);
+            const Int_t nBins = 64 / hist->pitch; // number of bins for the histogram
+            hist->clusterSize = new TH1D(Form("cluster_size_cathode%i_pitch%i", cathode, indexToPitch(pitch)), 
+                                         Form("Cluster Size for Cathode %i, Pitch %i; nStrips; Count", cathode, indexToPitch(pitch)), nBins, 1, nBins + 1);
+            hist->clusterSize->Sumw2();
+            clusterSizeHistograms.push_back(hist);
+        }
+    }
+
+    return clusterSizeHistograms;
+}
+
+std::vector<clusterPosHist*> initializeClusterPosHist() {
+    // initialize cluster size histograms
+    std::vector<clusterPosHist*> clusterPosHistograms;
+
     // loop over all MID deIds
     for (int deId = 0; deId < o2::mid::detparams::NDetectionElements; deId++) {
         for (int cathode = 0; cathode < 2; cathode++) { // 0: bending, 1: non-bending
             for (int pitch = 0; pitch < nPitches; pitch++) { // strip pitches
                 if (pitch == 0 && cathode == 1) continue; // skip non-bending plane for pitch 1
-                auto hist = new clusterSizeHist();
+                auto hist = new clusterPosHist();
                 hist->deId = deId;
                 hist->cathode = cathode;
                 hist->pitch = indexToPitch(pitch);
@@ -498,14 +562,14 @@ std::vector<clusterSizeHist*> initializeClusterSizeHist() {
                 Double_t stripWidth = o2::mid::geoparams::getStripUnitPitchSize(hist->chamber) * static_cast<Double_t>(hist->pitch) * 10; // in mm
                 const Int_t nBins = 2 * 32 / hist->pitch; // number of bins for the histogram
                 hist->clusterPosition = new TH1F(Form("strip_position_de%i_cathode%i_pitch%i", deId, cathode, indexToPitch(pitch)), 
-                                                Form("Strip Position (mm) for DE %i, Cathode %i, Pitch %i, Chamber %i", deId, cathode, indexToPitch(pitch), hist->chamber), nBins, 0.0, (nBins/2) * stripWidth);
+                                                Form("Strip Position (mm) for DE %i, Cathode %i, Pitch %i, Chamber %i; x (mm); f(x)", deId, cathode, indexToPitch(pitch), hist->chamber), nBins, 0.0, (nBins/2) * stripWidth);
                 hist->clusterPosition->Sumw2();
-                clusterSizeHistograms.push_back(hist);
+                clusterPosHistograms.push_back(hist);
             }
         }
     }
 
-    return clusterSizeHistograms;
+    return clusterPosHistograms;
 }
 
 float sum(float s, o2::dcs::DataPointValue v) {
