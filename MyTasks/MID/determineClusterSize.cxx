@@ -75,7 +75,7 @@ std::vector<cluster*> processMIDdigits(const char *fileMIDdigits, const char *fi
 cluster* processPreCluster(int rofID, o2::mid::PreCluster pc, o2::mid::Mapping* mapper);
 std::vector<clusterPosHist*> processClustersPosition(std::vector<cluster*> midClusters);
 void processClustersSize(std::vector<cluster*> midClusters);
-void processClusterPosHist(std::vector<clusterPosHist*> clusterPosHistograms);
+void processClusterPosHist(std::vector<clusterPosHist*> clusterPosHistograms, bool isMC);
 void fillStripPositions(clusterPosHist* hist, int nStrips, int pitch);
 DPMAP* accessHVObjectCCDB(int runNumber);
 float accessHVperDE(DPMAP* HV_map, int deId);
@@ -99,7 +99,7 @@ int main(int argc, char* argv[]) {
 
     auto clusterPosHist = processClustersPosition(midClusters);
 
-    processClusterPosHist(clusterPosHist);
+    processClusterPosHist(clusterPosHist, isMC);
 
     return 0;
 }
@@ -164,7 +164,7 @@ Double_t pdfFunc(Double_t *x, Double_t *par) // x = position (mm); par = {b, a0,
     return (1/(1+c)) * ((a / (a + (pow(xx,b)*costheta))) + c);
 }
 
-void processClusterPosHist(std::vector<clusterPosHist*> clusterPosHistograms) {
+void processClusterPosHist(std::vector<clusterPosHist*> clusterPosHistograms, bool isMC) {
     if (clusterPosHistograms.empty()) {
         std::cout << "No cluster size histograms available." << std::endl;
         return;
@@ -174,7 +174,10 @@ void processClusterPosHist(std::vector<clusterPosHist*> clusterPosHistograms) {
     DPMAP* HV_map = accessHVObjectCCDB(558801);
 
     // read out histograms
-    auto outFile = new TFile("cluster_hist_fitting.root", "RECREATE");
+    const char* outputFileName = isMC ? "cluster_hist_position_MC.root" : "cluster_hist_position_data.root";
+    auto outFile = new TFile(outputFileName, "RECREATE");
+
+    const char* legendLabel = isMC ? "O2 Sim" : "Data (Run 3)";
 
     // create current O2 PDF and parameters for comparison and fitting
     o2::mid::ChamberResponseParams chamberRespParam = o2::mid::createDefaultChamberResponseParams();
@@ -194,7 +197,7 @@ void processClusterPosHist(std::vector<clusterPosHist*> clusterPosHistograms) {
         // define current PDF for comparison
         auto clusterPDF_current = new TF1(Form("clusterPDF_current_de%i_cathode%i_pitch%i", clusterHist->deId, clusterHist->cathode, clusterHist->pitch), pdfFunc, 0, xMax, 7);
         clusterPDF_current->SetParNames("b", "a0", "a1", "c0", "c1", "hv", "theta");
-        clusterPDF_current->SetParameters(chamberRespParam.getParB(clusterHist->cathode, clusterHist->deId), -52.70, 6.089, -0.5e-3, 8.3e-4, 9.6, 0.0); // current parameters
+        clusterPDF_current->SetParameters(chamberRespParam.getParB(clusterHist->cathode, clusterHist->deId), -52.70, 6.089, -0.5e-3, 8.3e-4, HV_value, 0.0); // current parameters
         for (int i = 0; i < 7; ++i) clusterPDF_current->FixParameter(i, clusterPDF_current->GetParameter(i)); // fix all parameters (for comparison only)
 
         // define my own fit function
@@ -229,7 +232,7 @@ void processClusterPosHist(std::vector<clusterPosHist*> clusterPosHistograms) {
 
         // Add a legend
         TLegend* legend = new TLegend(0.6, 0.7, 0.9, 0.9);
-        legend->AddEntry(clusterHist->clusterPosition, "Data (Run 3)", "l");
+        legend->AddEntry(clusterHist->clusterPosition, legendLabel, "l");
         legend->AddEntry(clusterPDF_current, "Current O2 PDF (Run 2)", "l");
         //legend->AddEntry(clusterPDF_fit, "Fitted PDF", "l");
         legend->Draw("SAME");
@@ -298,7 +301,9 @@ void processClustersSize(std::vector<cluster*> midClusters) {
     auto outFile = new TFile("cluster_size_histograms.root", "RECREATE");
 
     for (auto hist : clusterSizeHistograms) {
-        TCanvas* canvas = new TCanvas(Form("cluster_size_cathode%i_pitch%i", hist->cathode, hist->pitch), "", 800, 600);
+        hist->clusterSize->Write();
+
+        TCanvas* canvas = new TCanvas(Form("cluster_size_cathode%i_pitch%i_canvas", hist->cathode, hist->pitch), "", 800, 600);
         canvas->SetLogy(); // Set y-axis to log scale
         hist->clusterSize->Draw("E1"); // Draw histogram with error bars and horizontal lines
         canvas->Write(); // Write the canvas to the output file
