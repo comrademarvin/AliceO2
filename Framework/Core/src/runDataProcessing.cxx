@@ -9,6 +9,7 @@
 // granted to it by virtue of its status as an Intergovernmental Organization
 // or submit itself to any jurisdiction.
 #include <memory>
+#include "Framework/DanglingEdgesContext.h"
 #include "Framework/TopologyPolicyHelpers.h"
 #define BOOST_BIND_GLOBAL_PLACEHOLDERS
 #include <stdexcept>
@@ -748,7 +749,11 @@ void spawnDevice(uv_loop_t* loop,
     for (auto& env : execution.environ) {
       putenv(strdup(DeviceSpecHelpers::reworkTimeslicePlaceholder(env, spec).data()));
     }
-    execvp(execution.args[0], execution.args.data());
+    int err = execvp(execution.args[0], execution.args.data());
+    if (err) {
+      perror("Unable to start child process");
+      exit(1);
+    }
   } else {
     O2_SIGNPOST_ID_GENERATE(sid, driver);
     O2_SIGNPOST_EVENT_EMIT(driver, sid, "spawnDevice", "New child at %{pid}d", id);
@@ -1012,6 +1017,7 @@ void doDefaultWorkflowTerminationHook()
 }
 
 int doChild(int argc, char** argv, ServiceRegistry& serviceRegistry,
+            DanglingEdgesContext& danglingEdgesContext,
             RunningWorkflowInfo const& runningWorkflow,
             RunningDeviceRef ref,
             DriverConfig const& driverConfig,
@@ -1074,6 +1080,7 @@ int doChild(int argc, char** argv, ServiceRegistry& serviceRegistry,
                                      &spec,
                                      &quotaEvaluator,
                                      &serviceRegistry,
+                                     &danglingEdgesContext,
                                      &deviceState,
                                      &deviceProxy,
                                      &processingPolicies,
@@ -1097,6 +1104,7 @@ int doChild(int argc, char** argv, ServiceRegistry& serviceRegistry,
     serviceRef.registerService(ServiceRegistryHelpers::handleForService<RunningWorkflowInfo const>(&runningWorkflow));
     serviceRef.registerService(ServiceRegistryHelpers::handleForService<DeviceContext>(deviceContext.get()));
     serviceRef.registerService(ServiceRegistryHelpers::handleForService<DriverConfig const>(&driverConfig));
+    serviceRef.registerService(ServiceRegistryHelpers::handleForService<DanglingEdgesContext>(&danglingEdgesContext));
 
     auto device = std::make_unique<DataProcessingDevice>(ref, serviceRegistry);
 
@@ -1949,6 +1957,7 @@ int runStateMachine(DataProcessorSpecs const& workflow,
           if (runningWorkflow.devices[di].id == frameworkId) {
             return doChild(driverInfo.argc, driverInfo.argv,
                            serviceRegistry,
+                           driverInfo.configContext->services().get<DanglingEdgesContext>(),
                            runningWorkflow, ref,
                            driverConfig,
                            driverInfo.processingPolicies,
@@ -3001,8 +3010,8 @@ int doMain(int argc, char** argv, o2::framework::WorkflowSpec const& workflow,
   ServiceSpecs driverServices = ServiceSpecHelpers::filterDisabled(CommonDriverServices::defaultServices(), driverServicesOverride);
   // We insert the hash for the internal devices.
   WorkflowHelpers::injectServiceDevices(physicalWorkflow, configContext);
-  auto reader = std::find_if(physicalWorkflow.begin(), physicalWorkflow.end(), [](DataProcessorSpec& spec) { return spec.name == "internal-dpl-aod-reader"; });
-  if (reader != physicalWorkflow.end()) {
+  auto& dec = configContext.services().get<DanglingEdgesContext>();
+  if (!(dec.requestedAODs.empty() && dec.requestedDYNs.empty() && dec.requestedIDXs.empty() && dec.requestedTIMs.empty())) {
     driverServices.push_back(ArrowSupport::arrowBackendSpec());
   }
   for (auto& service : driverServices) {

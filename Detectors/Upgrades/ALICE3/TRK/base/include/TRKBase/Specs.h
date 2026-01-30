@@ -34,11 +34,11 @@ namespace VD // TODO: add a primitive segmentation with more granularity wrt 1/4
 {
 namespace silicon
 {
-constexpr double thickness{30 * mu}; // thickness of the silicon (should be 10 um epitaxial layer + 20 um substrate)?
+constexpr double thickness{20 * mu}; // thickness of the silicon (should be 10 um epitaxial layer + 20 um substrate)?
 } // namespace silicon
 namespace metalstack
 {
-constexpr double thickness{0 * mu}; // thickness of the copper metal stack - for the moment it is not implemented
+constexpr double thickness{80 * mu}; // thickness of the copper metal stack - for the moment it is not implemented. PL: set to 80 um considering silicon as material
 } // namespace metalstack
 namespace petal
 {
@@ -49,8 +49,9 @@ namespace layer
 constexpr double pitchX{10 * mu};                                                                                                                        // pitch of the row
 constexpr double pitchZ{10 * mu};                                                                                                                        // pitch of the column
 constexpr double totalThickness{silicon::thickness + metalstack::thickness};                                                                             // total thickness of the chip
+constexpr std::array<double, nLayers> gaps{1.63 * mm, 1.2 * mm, 1.2 * mm};                                                                               // gaps between two consecutive petals
 constexpr std::array<double, nLayers> radii{0.5 * cm, 1.2 * cm, 2.5 * cm};                                                                               // radius of layer in cm
-constexpr std::array<double, nLayers> width{radii[0] * 2 * M_PI / 4, radii[1] * 2 * M_PI / 4, radii[2] * 2 * M_PI / 4};                                  // width of the quarter of layer in cm
+constexpr std::array<double, nLayers> width{radii[0] * 2 * M_PI / 4 - gaps[0], radii[1] * 2 * M_PI / 4 - gaps[1], radii[2] * 2 * M_PI / 4 - gaps[2]};    // width of the quarter of layer in cm
 constexpr double length{50 * cm};                                                                                                                        // length of the layer
 constexpr int nCols{static_cast<int>(length / pitchZ)};                                                                                                  // number of columns in the chip
 constexpr std::array<int, nLayers> nRows{static_cast<int>(width[0] / pitchX), static_cast<int>(width[1] / pitchX), static_cast<int>(width[2] / pitchX)}; // number of rows in the chip. For the moment is different for each layer since a siner segmentation in repetitive units is stil to be implemented
@@ -129,6 +130,14 @@ constexpr double pitchZ{15.0 * mu};
 constexpr double responseYShift{15.5 * mu};
 constexpr double thickness{45 * mu};
 } // namespace apts
+
+namespace alice3resp /// parameters for the alice3 chip response
+{
+constexpr double pitchX{10.0 * mu};
+constexpr double pitchZ{10.0 * mu};
+constexpr double responseYShift{5 * mu}; /// center of the epitaxial layer
+constexpr double thickness{20 * mu};
+} // namespace alice3resp
 
 } // namespace o2::trk::constants
 

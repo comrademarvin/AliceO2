@@ -10,8 +10,7 @@
 # or submit itself to any jurisdiction.
 
 o2_add_library(Framework
-               SOURCES src/AODReaderHelpers.cxx
-                       src/AnalysisHelpers.cxx
+               SOURCES src/AnalysisHelpers.cxx
                        src/AlgorithmSpec.cxx
                        src/ArrowSupport.cxx
                        src/ArrowTableSlicingCache.cxx
@@ -109,6 +108,7 @@ o2_add_library(Framework
                        src/SimpleOptionsRetriever.cxx
                        src/O2ControlHelpers.cxx
                        src/O2ControlLabels.cxx
+                       src/CommonLabels.cxx
                        src/O2ControlParameters.cxx
                        src/O2DataModelHelpers.cxx
                        src/OutputSpec.cxx
@@ -143,6 +143,7 @@ o2_add_library(Framework
                        src/Variant.cxx
                        src/VariantJSONHelpers.cxx
                        src/ExpressionJSONHelpers.cxx
+		       src/IndexJSONHelpers.cxx
                        src/VariantPropertyTreeHelpers.cxx
                        src/WorkflowCustomizationHelpers.cxx
                        src/WorkflowHelpers.cxx
@@ -224,6 +225,7 @@ add_executable(o2-test-framework-core
               test/test_FairMQOptionsRetriever.cxx
               test/test_FairMQResizableBuffer.cxx
               test/test_FairMQ.cxx
+              test/test_ForwardInputs.cxx
               test/test_FrameworkDataFlowToDDS.cxx
               test/test_FrameworkDataFlowToO2Control.cxx
               test/test_Graphviz.cxx

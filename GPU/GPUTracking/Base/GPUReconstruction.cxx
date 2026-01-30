@@ -63,7 +63,7 @@ struct GPUReconstructionPipelineQueue {
 } // namespace
 
 struct GPUReconstructionPipelineContext {
-  std::queue<GPUReconstructionPipelineQueue*> queue;
+  std::queue<GPUReconstructionPipelineQueue*> pipelineQueue;
   std::mutex mutex;
   std::condition_variable cond;
   bool terminate = false;
@@ -296,7 +296,7 @@ int32_t GPUReconstruction::InitPhaseBeforeDevice()
   if (!GetProcessingSettings().createO2Output || !IsGPU()) {
     mProcessingSettings->clearO2OutputFromGPU = false;
   }
-  if (!(mRecoSteps.stepsGPUMask & GPUDataTypes::RecoStep::TPCMerging)) {
+  if (!(mRecoSteps.stepsGPUMask & gpudatatypes::RecoStep::TPCMerging)) {
     mProcessingSettings->mergerSortTracks = false;
   }
   if (GetProcessingSettings().debugLevel > 3 || !IsGPU() || GetProcessingSettings().deterministicGPUReconstruction) {
@@ -764,7 +764,7 @@ void* GPUReconstruction::AllocateDirectMemory(size_t size, int32_t type)
   }
   UpdateMaxMemoryUsed();
   if (GetProcessingSettings().allocDebugLevel >= 2) {
-    std::cout << "Allocated (unmanaged " << (type == GPUMemoryResource::MEMORY_GPU ? "gpu" : "host") << "): " << size << " - available: " << ptrDiff(poolend, pool) << "\n";
+    std::cout << "Allocated (unmanaged " << ((type & GPUMemoryResource::MEMORY_GPU) ? "gpu" : "host") << "): " << size << " - available: " << ptrDiff(poolend, pool) << "\n";
   }
   return retVal;
 }
@@ -902,7 +902,7 @@ void GPUReconstruction::PopNonPersistentMemory(RecoStep step, uint64_t tag, cons
     GPUFatal("Tag mismatch when popping non persistent memory from stack : pop %s vs on stack %s", qTag2Str(tag).c_str(), qTag2Str(std::get<4>(mNonPersistentMemoryStack.back())).c_str());
   }
   if (!proc && (GetProcessingSettings().debugLevel >= 3 || GetProcessingSettings().allocDebugLevel) && (IsGPU() || GetProcessingSettings().forceHostMemoryPoolSize)) {
-    printf("Allocated memory after %30s (%8s) (Stack %zu): ", GPUDataTypes::RECO_STEP_NAMES[getRecoStepNum(step, true)], qTag2Str(std::get<4>(mNonPersistentMemoryStack.back())).c_str(), mNonPersistentMemoryStack.size());
+    printf("Allocated memory after %30s (%8s) (Stack %zu): ", gpudatatypes::RECO_STEP_NAMES[getRecoStepNum(step, true)], qTag2Str(std::get<4>(mNonPersistentMemoryStack.back())).c_str(), mNonPersistentMemoryStack.size());
     PrintMemoryOverview();
     printf("%76s", "");
     PrintMemoryMax();
@@ -1074,8 +1074,8 @@ constexpr static inline int32_t getStepNum(T step, bool validCheck, int32_t N, c
 } // anonymous namespace
 } // namespace o2::gpu::internal
 
-int32_t GPUReconstruction::getRecoStepNum(RecoStep step, bool validCheck) { return internal::getStepNum(step, validCheck, GPUDataTypes::N_RECO_STEPS, "Invalid Reco Step"); }
-int32_t GPUReconstruction::getGeneralStepNum(GeneralStep step, bool validCheck) { return internal::getStepNum(step, validCheck, GPUDataTypes::N_GENERAL_STEPS, "Invalid General Step"); }
+int32_t GPUReconstruction::getRecoStepNum(RecoStep step, bool validCheck) { return internal::getStepNum(step, validCheck, gpudatatypes::N_RECO_STEPS, "Invalid Reco Step"); }
+int32_t GPUReconstruction::getGeneralStepNum(GeneralStep step, bool validCheck) { return internal::getStepNum(step, validCheck, gpudatatypes::N_GENERAL_STEPS, "Invalid General Step"); }
 
 void GPUReconstruction::RunPipelineWorker()
 {
@@ -1089,13 +1089,13 @@ void GPUReconstruction::RunPipelineWorker()
   while (!terminate) {
     {
       std::unique_lock<std::mutex> lk(mPipelineContext->mutex);
-      mPipelineContext->cond.wait(lk, [this] { return this->mPipelineContext->queue.size() > 0; });
+      mPipelineContext->cond.wait(lk, [this] { return this->mPipelineContext->pipelineQueue.size() > 0; });
     }
     GPUReconstructionPipelineQueue* q;
     {
       std::lock_guard<std::mutex> lk(mPipelineContext->mutex);
-      q = mPipelineContext->queue.front();
-      mPipelineContext->queue.pop();
+      q = mPipelineContext->pipelineQueue.front();
+      mPipelineContext->pipelineQueue.pop();
     }
     if (q->op == 1) {
       terminate = 1;
@@ -1132,26 +1132,23 @@ int32_t GPUReconstruction::EnqueuePipeline(bool terminate)
     if (rec->mPipelineContext->terminate) {
       throw std::runtime_error("Must not enqueue work after termination request");
     }
-    rec->mPipelineContext->queue.push(q);
+    rec->mPipelineContext->pipelineQueue.push(q);
     rec->mPipelineContext->terminate = terminate;
     rec->mPipelineContext->cond.notify_one();
   }
   q->c.wait(lkdone, [&q]() { return q->done; });
-  if (q->retVal) {
+  if (terminate || (q->retVal && (q->retVal != 3 || !GetProcessingSettings().ignoreNonFatalGPUErrors))) {
     return q->retVal;
   }
-  if (terminate) {
-    return 0;
-  } else {
-    return mChains[0]->FinalizePipelinedProcessing();
-  }
+  int32_t retVal2 = mChains[0]->FinalizePipelinedProcessing();
+  return retVal2 ? retVal2 : q->retVal;
 }
 
 GPUChain* GPUReconstruction::GetNextChainInQueue()
 {
   GPUReconstruction* rec = mMaster ? mMaster : this;
   std::lock_guard<std::mutex> lk(rec->mPipelineContext->mutex);
-  return rec->mPipelineContext->queue.size() && rec->mPipelineContext->queue.front()->op == 0 ? rec->mPipelineContext->queue.front()->chain : nullptr;
+  return rec->mPipelineContext->pipelineQueue.size() && rec->mPipelineContext->pipelineQueue.front()->op == 0 ? rec->mPipelineContext->pipelineQueue.front()->chain : nullptr;
 }
 
 void GPUReconstruction::PrepareEvent() // TODO: Clean this up, this should not be called from chainTracking but before
@@ -1225,7 +1222,7 @@ void GPUReconstruction::UpdateSettings(const GPUSettingsGRP* g, const GPUSetting
     mProcessingSettings->resetTimers = p->resetTimers;
   }
   GPURecoStepConfiguration* w = nullptr;
-  if (mRecoSteps.steps.isSet(GPUDataTypes::RecoStep::TPCdEdx)) {
+  if (mRecoSteps.steps.isSet(gpudatatypes::RecoStep::TPCdEdx)) {
     w = &mRecoSteps;
   }
   param().UpdateSettings(g, p, w, d);

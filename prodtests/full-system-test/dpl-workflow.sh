@@ -106,7 +106,8 @@ EVE_OPT=" --jsons-folder $EDJSONS_DIR"
 : ${ITSTPC_CONFIG_KEY:=}
 : ${AOD_SOURCES:=$TRACK_SOURCES}
 : ${AODPROD_OPT:=}
-: ${ALPIDE_ERR_DUMPS:=0}
+: ${ALPIDE_ERR_DUMPS:=}
+[[ -z $ALPIDE_ERR_DUMPS ]] && [[ $EPNSYNCMODE == 1 && $RUNTYPE == "PHYSICS" ]] && ALPIDE_ERR_DUMPS=1 || ALPIDE_ERR_DUMPS=0
 
 [[ "0$DISABLE_ROOT_OUTPUT" == "00" ]] && DISABLE_ROOT_OUTPUT=
 
@@ -133,7 +134,7 @@ if [[ $SYNCMODE == 1 ]]; then
 
   PVERTEXING_CONFIG_KEY+="pvertexer.meanVertexExtraErrConstraint=0.3;" # for calibration relax the constraint
   if [[ $SYNCRAWMODE == 1 ]]; then # add extra tolerance in sync mode to account for eventual time misalignment
-    PVERTEXING_CONFIG_KEY+="pvertexer.timeMarginVertexTime=2.5;"
+    [[ $BEAMTYPE == "pp" ]] && PVERTEXING_CONFIG_KEY+="pvertexer.timeMarginVertexTime=5;" || PVERTEXING_CONFIG_KEY+="pvertexer.timeMarginVertexTime=2.5;"
     if [[ -z $ITSEXTRAERR ]]; then # in sync mode account for ITS residual misalignment
       ERRIB="100e-8"
       ERROB="100e-8"
@@ -145,6 +146,8 @@ if [[ $SYNCMODE == 1 ]]; then
     fi
   fi
   GPU_CONFIG_KEY+="GPU_global.synchronousProcessing=1;GPU_proc.clearO2OutputFromGPU=1;"
+  # relaxed cuts also used for async reconstruction, they require scaling of the GPU memory
+  GPU_CONFIG_KEY+="GPU_rec_tpc.trackletMinSharedNormFactor=1.;GPU_rec_tpc.trackletMaxSharedFraction=0.3;GPU_rec_tpc.rejectIFCLowRadiusCluster=1;GPU_rec_tpc.extrapolationTrackingRowRange=100;GPU_rec_tpc.clusterError2AdditionalYSeeding=0.1;GPU_rec_tpc.clusterError2AdditionalZSeeding=0.15;GPU_proc.memoryScalingFactor=1.2;"
   has_processing_step TPC_DEDX && GPU_CONFIG_KEY+="GPU_global.rundEdx=1;"
   has_detector ITS && TRD_FILTER_CONFIG+=" --filter-trigrec"
 else
@@ -284,8 +287,6 @@ if [[ $GPUTYPE == "HIP" ]]; then
   if [[ ${EPN_NODE_MI100:-} == "1" && ${DISABLE_MI100_SERIALIZATION:-0} != 1 ]]; then
     if [[ -n ${OPTIMIZED_PARALLEL_ASYNC:-} ]] || [[ $EPNSYNCMODE == 1 && ${FULL_MI100_SERIALIZATION:-0} == 1 ]]; then
       GPU_CONFIG_KEY+="GPU_proc.serializeGPU=3;"
-    elif [[ $EPNSYNCMODE == 1 ]]; then
-      GPU_CONFIG_KEY+="GPU_proc.amdMI100SerializationWorkaround=1;"
     fi
   fi
   #export HSA_TOOLS_LIB=/opt/rocm/lib/librocm-debug-agent.so.2

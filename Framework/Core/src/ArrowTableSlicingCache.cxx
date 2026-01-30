@@ -19,12 +19,30 @@
 namespace o2::framework
 {
 
-void updatePairList(Cache& list, std::string const& binding, std::string const& key, bool enabled = true)
+namespace
 {
-  auto locate = std::find_if(list.begin(), list.end(), [&binding, &key](auto const& entry) { return (entry.binding == binding) && (entry.key == key); });
+std::shared_ptr<arrow::ChunkedArray> GetColumnByNameCI(std::shared_ptr<arrow::Table> const& table, std::string const& key)
+{
+  auto const& fields = table->schema()->fields();
+  auto target = std::find_if(fields.begin(), fields.end(), [&key](std::shared_ptr<arrow::Field> const& field) {
+    return [](std::string_view const& s1, std::string_view const& s2) {
+      return std::ranges::equal(
+        s1, s2,
+        [](char c1, char c2) {
+          return std::tolower(static_cast<unsigned char>(c1)) == std::tolower(static_cast<unsigned char>(c2));
+        });
+    }(field->name(), key);
+  });
+  return table->column(std::distance(fields.begin(), target));
+}
+} // namespace
+
+void updatePairList(Cache& list, Entry& entry)
+{
+  auto locate = std::find(list.begin(), list.end(), entry);
   if (locate == list.end()) {
-    list.emplace_back(binding, key, enabled);
-  } else if (!locate->enabled && enabled) {
+    list.emplace_back(entry);
+  } else if (!locate->enabled && entry.enabled) {
     locate->enabled = true;
   }
 }
@@ -92,14 +110,14 @@ arrow::Status ArrowTableSlicingCache::updateCacheEntry(int pos, std::shared_ptr<
   if (table->num_rows() == 0) {
     return arrow::Status::OK();
   }
-  auto& [b, k, e] = bindingsKeys[pos];
+  auto& [b, m, k, e] = bindingsKeys[pos];
   if (!e) {
     throw runtime_error_f("Disabled cache %s/%s update requested", b.c_str(), k.c_str());
   }
   validateOrder(bindingsKeys[pos], table);
 
   int maxValue = -1;
-  auto column = table->GetColumnByName(k);
+  auto column = GetColumnByNameCI(table, k);
 
   // starting from the end, find the first positive value, in a sorted column it is the largest index
   for (auto iChunk = column->num_chunks() - 1; iChunk >= 0; --iChunk) {
@@ -151,11 +169,11 @@ arrow::Status ArrowTableSlicingCache::updateCacheEntryUnsorted(int pos, const st
   if (table->num_rows() == 0) {
     return arrow::Status::OK();
   }
-  auto& [b, k, e] = bindingsKeysUnsorted[pos];
+  auto& [b, m, k, e] = bindingsKeysUnsorted[pos];
   if (!e) {
     throw runtime_error_f("Disabled unsorted cache %s/%s update requested", b.c_str(), k.c_str());
   }
-  auto column = table->GetColumnByName(k);
+  auto column = GetColumnByNameCI(table, k);
   auto row = 0;
   for (auto iChunk = 0; iChunk < column->num_chunks(); ++iChunk) {
     auto chunk = static_cast<arrow::NumericArray<arrow::Int32Type>>(column->chunk(iChunk)->data());
@@ -192,7 +210,7 @@ std::pair<int, bool> ArrowTableSlicingCache::getCachePos(const Entry& bindingKey
 
 int ArrowTableSlicingCache::getCachePosSortedFor(Entry const& bindingKey) const
 {
-  auto locate = std::find_if(bindingsKeys.begin(), bindingsKeys.end(), [&](Entry const& bk) { return (bindingKey.binding == bk.binding) && (bindingKey.key == bk.key); });
+  auto locate = std::ranges::find(bindingsKeys, bindingKey);
   if (locate != bindingsKeys.end()) {
     return std::distance(bindingsKeys.begin(), locate);
   }
@@ -201,7 +219,7 @@ int ArrowTableSlicingCache::getCachePosSortedFor(Entry const& bindingKey) const
 
 int ArrowTableSlicingCache::getCachePosUnsortedFor(Entry const& bindingKey) const
 {
-  auto locate_unsorted = std::find_if(bindingsKeysUnsorted.begin(), bindingsKeysUnsorted.end(), [&](Entry const& bk) { return (bindingKey.binding == bk.binding) && (bindingKey.key == bk.key); });
+  auto locate_unsorted = std::ranges::find(bindingsKeysUnsorted, bindingKey);
   if (locate_unsorted != bindingsKeysUnsorted.end()) {
     return std::distance(bindingsKeysUnsorted.begin(), locate_unsorted);
   }
@@ -251,10 +269,13 @@ SliceInfoUnsortedPtr ArrowTableSlicingCache::getCacheUnsortedForPos(int pos) con
 
 void ArrowTableSlicingCache::validateOrder(Entry const& bindingKey, const std::shared_ptr<arrow::Table>& input)
 {
-  auto const& [target, key, enabled] = bindingKey;
-  auto column = input->GetColumnByName(key);
+  auto const& [target, matcher, key, enabled] = bindingKey;
+  if (!enabled) {
+    return;
+  }
+  auto column = o2::framework::GetColumnByNameCI(input, key);
   auto array0 = static_cast<arrow::NumericArray<arrow::Int32Type>>(column->chunk(0)->data());
-  int32_t prev = 0;
+  int32_t prev;
   int32_t cur = array0.Value(0);
   int32_t lastNeg = cur < 0 ? cur : 0;
   int32_t lastPos = cur < 0 ? -1 : cur;

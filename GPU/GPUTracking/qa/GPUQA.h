@@ -16,6 +16,7 @@
 #define GPUQA_H
 
 #include "GPUSettings.h"
+#include "GPUDataTypesQA.h"
 struct AliHLTTPCClusterMCWeight;
 class TH1F;
 class TH2F;
@@ -62,6 +63,8 @@ class GPUQA
 #else
 
 #include "GPUTPCDef.h"
+#include "GPUDataTypesIO.h"
+#include <cstdio>
 #include <cmath>
 #include <vector>
 #include <memory>
@@ -145,17 +148,7 @@ class GPUQA
 
   static constexpr int32_t MC_LABEL_INVALID = -1e9;
 
-  enum QA_TASKS {
-    taskTrackingEff = 1,
-    taskTrackingRes = 2,
-    taskTrackingResPull = 4,
-    taskClusterAttach = 8,
-    taskTrackStatistics = 16,
-    taskClusterCounts = 32,
-    taskDefault = 63,
-    taskDefaultPostprocess = 31,
-    tasksNoQC = 56
-  };
+  using enum gpudatatypes::gpuqa::gpuQATaskIds;
 
  private:
   struct additionalMCParameters {
@@ -297,10 +290,10 @@ class GPUQA
     double nUnaccessible = 0;
   } mClusterCounts;
 
-  TH1F* mTracks;
-  TCanvas* mCTracks;
-  TPad* mPTracks;
-  TLegend* mLTracks;
+  TH1F* mTrackPt;
+  TCanvas* mCTrackPt;
+  TPad* mPTrackPt;
+  TLegend* mLTrackPt;
 
   TH1F* mNCl[2];
   TCanvas* mCNCl[2];
@@ -323,9 +316,9 @@ class GPUQA
   TPad* mPClRej[3];
   TPad* mPClRejP;
 
-  TH2F* mPadRow[2];
-  TCanvas* mCPadRow[2];
-  TPad* mPPadRow[2];
+  TH2F* mPadRow[4];
+  TCanvas* mCPadRow[4];
+  TPad* mPPadRow[4];
 
   std::vector<TH2F*> mHistClusterCount;
 
@@ -365,6 +358,7 @@ class GPUQA
   int32_t mMCTrackMin = -1, mMCTrackMax = -1;
 
   const o2::tpc::ClusterNativeAccess* mClNative = nullptr;
+  FILE* mTextDump = nullptr;
 };
 
 inline bool GPUQA::SuppressTrack(int32_t iTrack) const { return (mConfig.matchMCLabels.size() && !mGoodTracks[mNEvents][iTrack]); }

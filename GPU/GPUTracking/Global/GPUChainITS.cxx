@@ -30,13 +30,13 @@ class GPUFrameworkExternalAllocator final : public o2::its::ExternalAllocator
     return mFWReco->AllocateDirectMemory(size, mType);
   }
   void deallocate(char* ptr, size_t size) final {} // this is a simple no-op
-  void pushTagOnStack(uint64_t tag)
+  void pushTagOnStack(uint64_t tag) final
   {
     mFWReco->PushNonPersistentMemory(tag);
   }
-  void popTagOffStack(uint64_t tag)
+  void popTagOffStack(uint64_t tag) final
   {
-    mFWReco->PopNonPersistentMemory(GPUDataTypes::RecoStep::ITSTracking, tag);
+    mFWReco->PopNonPersistentMemory(gpudatatypes::RecoStep::ITSTracking, tag);
   }
   void setReconstructionFramework(o2::gpu::GPUReconstruction* fwr) { mFWReco = fwr; }
 
@@ -45,11 +45,7 @@ class GPUFrameworkExternalAllocator final : public o2::its::ExternalAllocator
 };
 } // namespace o2::its
 
-GPUChainITS::~GPUChainITS()
-{
-  mITSTrackerTraits.reset();
-  mITSVertexerTraits.reset();
-}
+GPUChainITS::~GPUChainITS() = default;
 
 GPUChainITS::GPUChainITS(GPUReconstruction* rec) : GPUChain(rec) {}
 

@@ -34,23 +34,11 @@ namespace o2::framework
 
 namespace
 {
-template <typename O>
-static inline auto extractOriginal(ProcessingContext& pc)
-{
-  return pc.inputs().get<TableConsumer>(aod::MetadataTrait<O>::metadata::tableLabel())->asArrowTable();
-}
-
-template <typename... Os>
-static inline std::vector<std::shared_ptr<arrow::Table>> extractOriginals(framework::pack<Os...>, ProcessingContext& pc)
-{
-  return {extractOriginal<Os>(pc)...};
-}
-
 template <size_t N, std::array<soa::TableRef, N> refs>
 static inline auto extractOriginals(ProcessingContext& pc)
 {
   return [&]<size_t... Is>(std::index_sequence<Is...>) -> std::vector<std::shared_ptr<arrow::Table>> {
-    return {pc.inputs().get<TableConsumer>(o2::aod::label<refs[Is]>())->asArrowTable()...};
+    return {pc.inputs().get<TableConsumer>(o2::aod::matcher<refs[Is]>())->asArrowTable()...};
   }(std::make_index_sequence<refs.size()>());
 }
 } // namespace
@@ -160,12 +148,12 @@ const char* controlOption()
 }
 
 template <typename T>
-concept with_base_table = requires(T const& t) { t.base_specs(); };
+concept with_base_table = requires { T::base_specs(); };
 
 template <with_base_table T>
-bool requestInputs(std::vector<InputSpec>& inputs, T const& entity)
+bool requestInputs(std::vector<InputSpec>& inputs, T const& /*entity*/)
 {
-  auto base_specs = entity.base_specs();
+  auto base_specs = T::base_specs();
   for (auto base_spec : base_specs) {
     base_spec.metadata.push_back(ConfigParamSpec{std::string{controlOption<T>()}, VariantType::Bool, true, {"\"\""}});
     DataSpecUtils::updateInputList(inputs, std::forward<InputSpec>(base_spec));
@@ -182,7 +170,7 @@ bool newDataframeCondition(InputRecord&, C&)
 template <is_condition C>
 bool newDataframeCondition(InputRecord& record, C& condition)
 {
-  condition.instance = (typename C::type*)record.get<typename C::type*>(condition.path).get();
+  condition.instance = (typename C::type*)record.get<typename C::type*>(condition.path).release();
   return true;
 }
 
@@ -289,9 +277,8 @@ bool prepareOutput(ProcessingContext& context, T& spawns)
 {
   using metadata = o2::aod::MetadataTrait<o2::aod::Hash<T::spawnable_t::ref.desc_hash>>::metadata;
   auto originalTable = soa::ArrowHelpers::joinTables(extractOriginals<metadata::sources.size(), metadata::sources>(context), std::span{metadata::base_table_t::originalLabels});
-  if (originalTable->schema()->fields().empty() == true) {
-    using base_table_t = typename T::base_table_t::table_t;
-    originalTable = makeEmptyTable<base_table_t>(o2::aod::label<metadata::extension_table_t::ref>());
+  if (originalTable->num_rows() == 0) {
+    originalTable = makeEmptyTable<metadata::base_table_t::ref>();
   }
   using D = o2::aod::Hash<metadata::extension_table_t::ref.desc_hash>;
 
@@ -308,7 +295,7 @@ template <is_builds T>
 bool prepareOutput(ProcessingContext& context, T& builds)
 {
   using metadata = o2::aod::MetadataTrait<o2::aod::Hash<T::buildable_t::ref.desc_hash>>::metadata;
-  return builds.template build<typename T::buildable_t::indexing_t>(builds.pack(), extractOriginals<metadata::sources.size(), metadata::sources>(context));
+  return builds.build(extractOriginals<metadata::sources.size(), metadata::sources>(context));
 }
 
 template <is_defines T>
@@ -317,9 +304,8 @@ bool prepareOutput(ProcessingContext& context, T& defines)
 {
   using metadata = o2::aod::MetadataTrait<o2::aod::Hash<T::spawnable_t::ref.desc_hash>>::metadata;
   auto originalTable = soa::ArrowHelpers::joinTables(extractOriginals<metadata::sources.size(), metadata::sources>(context), std::span{metadata::base_table_t::originalLabels});
-  if (originalTable->schema()->fields().empty() == true) {
-    using base_table_t = typename T::base_table_t::table_t;
-    originalTable = makeEmptyTable<base_table_t>(o2::aod::label<metadata::extension_table_t::ref>());
+  if (originalTable->num_rows() == 0) {
+    originalTable = makeEmptyTable<metadata::base_table_t::ref>();
   }
   if (defines.inputSchema == nullptr) {
     defines.inputSchema = originalTable->schema();
@@ -350,9 +336,8 @@ bool prepareDelayedOutput(ProcessingContext& context, T& defines)
   }
   using metadata = o2::aod::MetadataTrait<o2::aod::Hash<T::spawnable_t::ref.desc_hash>>::metadata;
   auto originalTable = soa::ArrowHelpers::joinTables(extractOriginals<metadata::sources.size(), metadata::sources>(context), std::span{metadata::base_table_t::originalLabels});
-  if (originalTable->schema()->fields().empty() == true) {
-    using base_table_t = typename T::base_table_t::table_t;
-    originalTable = makeEmptyTable<base_table_t>(o2::aod::label<metadata::extension_table_t::ref>());
+  if (originalTable->num_rows() == 0) {
+    originalTable = makeEmptyTable<metadata::base_table_t::ref>();
   }
   if (defines.inputSchema == nullptr) {
     defines.inputSchema = originalTable->schema();
@@ -601,7 +586,7 @@ bool registerCache(T& preslice, Cache& bsks, Cache&)
       return true;
     }
   }
-  auto locate = std::find_if(bsks.begin(), bsks.end(), [&](auto const& entry) { return (entry.binding == preslice.bindingKey.binding) && (entry.key == preslice.bindingKey.key); });
+  auto locate = std::find(bsks.begin(), bsks.end(), preslice.getBindingKey());
   if (locate == bsks.end()) {
     bsks.emplace_back(preslice.getBindingKey());
   } else if (locate->enabled == false) {
@@ -619,7 +604,7 @@ bool registerCache(T& preslice, Cache&, Cache& bsksU)
       return true;
     }
   }
-  auto locate = std::find_if(bsksU.begin(), bsksU.end(), [&](auto const& entry) { return (entry.binding == preslice.bindingKey.binding) && (entry.key == preslice.bindingKey.key); });
+  auto locate = std::find(bsksU.begin(), bsksU.end(), preslice.getBindingKey());
   if (locate == bsksU.end()) {
     bsksU.emplace_back(preslice.getBindingKey());
   } else if (locate->enabled == false) {

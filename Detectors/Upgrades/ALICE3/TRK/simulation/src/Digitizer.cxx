@@ -48,15 +48,9 @@ void Digitizer::init()
       mChips[i].setDeadChanMap(mDeadChanMap);
     }
   }
-  // importing the charge collection tables
-  // (initialized while building O2)
-  auto file = TFile::Open(mResponseFile.data());
-  if (!file) {
-    LOG(fatal) << "Cannot open response file " << mResponseFile;
-  }
 
-  // setting the correct response function (for the moment, for both VD and MLOT the APTS response function is udes)
-  mChipSimResp = (o2::trk::ChipSimResponse*)file->Get("response1");
+  // setting the correct response function (for the moment, for both VD and MLOT the same response function is used)
+  mChipSimResp = mParams.getAlpSimResponse();
   mChipSimRespVD = mChipSimResp;   /// for the moment considering the same response
   mChipSimRespMLOT = mChipSimResp; /// for the moment considering the same response
 
@@ -71,11 +65,24 @@ void Digitizer::init()
   float thicknessVD = 0.0095;                                            // cm --- hardcoded based on geometry currently present
   float thicknessMLOT = o2::trk::SegmentationChip::SiliconThicknessMLOT; // 0.01 cm = 100 um --- based on geometry currently present
 
-  mSimRespVDScaleX = o2::trk::constants::apts::pitchX / o2::trk::SegmentationChip::PitchRowVD;
-  mSimRespVDScaleZ = o2::trk::constants::apts::pitchZ / o2::trk::SegmentationChip::PitchColVD;
-  mSimRespVDShift = mChipSimRespVD->getDepthMax(); // the curved, rescaled, sensors have a width from 0 to -45. Must add 10 um (= max depth) to match the APTS response.
-  mSimRespMLOTScaleX = o2::trk::constants::apts::pitchX / o2::trk::SegmentationChip::PitchRowMLOT;
-  mSimRespMLOTScaleZ = o2::trk::constants::apts::pitchZ / o2::trk::SegmentationChip::PitchColMLOT;
+  LOG(info) << "Using response name: " << mRespName;
+
+  if (mRespName == "APTS") { // default
+    mSimRespVDScaleX = o2::trk::constants::apts::pitchX / o2::trk::SegmentationChip::PitchRowVD;
+    mSimRespVDScaleZ = o2::trk::constants::apts::pitchZ / o2::trk::SegmentationChip::PitchColVD;
+    mSimRespVDShift = mChipSimRespVD->getDepthMax(); // the curved, rescaled, sensors have a width from 0 to -45. Must add ~10 um (= max depth) to match the APTS response.
+    mSimRespMLOTScaleX = o2::trk::constants::apts::pitchX / o2::trk::SegmentationChip::PitchRowMLOT;
+    mSimRespMLOTScaleZ = o2::trk::constants::apts::pitchZ / o2::trk::SegmentationChip::PitchColMLOT;
+  } else if (mRespName == "ALICE3") {
+    mSimRespVDScaleX = o2::trk::constants::alice3resp::pitchX / o2::trk::SegmentationChip::PitchRowVD;
+    mSimRespVDScaleZ = o2::trk::constants::alice3resp::pitchZ / o2::trk::SegmentationChip::PitchColVD;
+    mSimRespVDShift = mChipSimRespVD->getDepthMax(); // the curved, rescaled, sensors have a width from 0 to -95 um. Must align the start of epi layer with the response function.
+    mSimRespMLOTScaleX = o2::trk::constants::alice3resp::pitchX / o2::trk::SegmentationChip::PitchRowMLOT;
+    mSimRespMLOTScaleZ = o2::trk::constants::alice3resp::pitchZ / o2::trk::SegmentationChip::PitchColMLOT;
+  } else {
+    LOG(fatal) << "Unknown response name: " << mRespName;
+  }
+
   mSimRespMLOTShift = mChipSimRespMLOT->getDepthMax() - thicknessMLOT / 2.f; // the shift should be done considering the rescaling done to adapt to the wrong silicon thickness. TODO: remove the scaling factor for the depth when the silicon thickness match the simulated response
   mSimRespOrientation = false;
 
@@ -92,7 +99,7 @@ void Digitizer::init()
   mIRFirstSampledTF = o2::raw::HBFUtils::Instance().getFirstSampledTFIR();
 }
 
-o2::trk::ChipSimResponse* Digitizer::getChipResponse(int chipID)
+const o2::trk::ChipSimResponse* Digitizer::getChipResponse(int chipID)
 {
   if (mGeometry->getSubDetID(chipID) == 0) { /// VD
     return mChipSimRespVD;
@@ -109,11 +116,11 @@ void Digitizer::process(const std::vector<Hit>* hits, int evID, int srcID)
 {
   // digitize single event, the time must have been set beforehand
 
-  LOG(info) << " Digitizing " << mGeometry->getName() << " (ID: " << mGeometry->getDetID()
-            << ") hits of entry " << evID << " from source " << srcID
-            << " at time " << mEventTime << " ROFrame= " << mNewROFrame << ")"
-            << " cont.mode: " << isContinuous()
-            << " Min/Max ROFrames " << mROFrameMin << "/" << mROFrameMax;
+  LOG(debug) << " Digitizing " << mGeometry->getName() << " (ID: " << mGeometry->getDetID()
+             << ") hits of entry " << evID << " from source " << srcID
+             << " at time " << mEventTime << " ROFrame= " << mNewROFrame << ")"
+             << " cont.mode: " << isContinuous()
+             << " Min/Max ROFrames " << mROFrameMin << "/" << mROFrameMax;
 
   std::cout << "Printing segmentation info: " << std::endl;
   SegmentationChip::Print();
@@ -165,7 +172,7 @@ void Digitizer::setEventTime(const o2::InteractionTimeRecord& irt)
 
     mNewROFrame = nbc / mParams.getROFrameLengthInBC();
 
-    LOG(info) << " NewROFrame " << mNewROFrame << " = " << nbc << "/" << mParams.getROFrameLengthInBC() << " (nbc/mParams.getROFrameLengthInBC()";
+    LOG(debug) << " NewROFrame " << mNewROFrame << " = " << nbc << "/" << mParams.getROFrameLengthInBC() << " (nbc/mParams.getROFrameLengthInBC()";
 
     // in continuous mode depends on starts of periodic readout frame
     mCollisionTimeWrtROF += (nbc % mParams.getROFrameLengthInBC()) * o2::constants::lhc::LHCBunchSpacingNS;

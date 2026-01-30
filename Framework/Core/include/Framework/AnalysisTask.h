@@ -75,11 +75,11 @@ struct AnalysisDataProcessorBuilder {
       auto key = std::string{"fIndex"} + o2::framework::cutString(soa::getLabelFromType<std::decay_t<G>>());
       ([&bk, &bku, &key, enabled]() mutable {
         if constexpr (soa::relatedByIndex<std::decay_t<G>, std::decay_t<As>>()) {
-          auto binding = soa::getLabelFromTypeForKey<std::decay_t<As>>(key);
+          Entry e{soa::getLabelFromTypeForKey<std::decay_t<As>>(key), soa::getMatcherFromTypeForKey<std::decay_t<As>>(key), key, enabled};
           if constexpr (o2::soa::is_smallgroups<std::decay_t<As>>) {
-            framework::updatePairList(bku, binding, key, enabled);
+            framework::updatePairList(bku, e);
           } else {
-            framework::updatePairList(bk, binding, key, enabled);
+            framework::updatePairList(bk, e);
           }
         }
       }(),
@@ -214,7 +214,7 @@ struct AnalysisDataProcessorBuilder {
   template <soa::TableRef R>
   static auto extractTableFromRecord(InputRecord& record)
   {
-    auto table = record.get<TableConsumer>(o2::aod::label<R>())->asArrowTable();
+    auto table = record.get<TableConsumer>(o2::aod::matcher<R>())->asArrowTable();
     if (table->num_rows() == 0) {
       table = makeEmptyTable<R>();
     }
@@ -521,7 +521,7 @@ DataProcessorSpec adaptAnalysisTask(ConfigContext const& ctx, Args&&... args)
   std::vector<ExpressionInfo> expressionInfos;
 
   /// make sure options and configurables are set before expression infos are created
-  homogeneous_apply_refs([&options, &hash](auto& element) { return analysis_task_parsers::appendOption(options, element); }, *task.get());
+  homogeneous_apply_refs([&options](auto& element) { return analysis_task_parsers::appendOption(options, element); }, *task.get());
   /// extract conditions and append them as inputs
   homogeneous_apply_refs([&inputs](auto& element) { return analysis_task_parsers::appendCondition(inputs, element); }, *task.get());
 
@@ -620,7 +620,7 @@ DataProcessorSpec adaptAnalysisTask(ConfigContext const& ctx, Args&&... args)
       }
       // reset pre-slice for the next dataframe
       auto slices = pc.services().get<ArrowTableSlicingCache>();
-      homogeneous_apply_refs([&pc, &slices](auto& element) {
+      homogeneous_apply_refs([&slices](auto& element) {
         return analysis_task_parsers::updateSliceInfo(element, slices);
       },
                              *(task.get()));

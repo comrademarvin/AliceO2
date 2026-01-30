@@ -34,6 +34,7 @@
 #include <TChain.h>
 #include <TStopwatch.h>
 
+#include <memory>
 #include <string>
 
 using namespace o2::framework;
@@ -68,6 +69,7 @@ class TRKDPLDigitizerTask : BaseDPLDigitizer
   void initDigitizerTask(framework::InitContext& ic) override
   {
     mDisableQED = ic.options().get<bool>("disable-qed");
+    mLocalRespFile = ic.options().get<std::string>("local-response-file");
   }
 
   void run(framework::ProcessingContext& pc)
@@ -200,6 +202,15 @@ class TRKDPLDigitizerTask : BaseDPLDigitizer
     mFinished = true;
   }
 
+  void setLocalResponseFunction()
+  {
+    std::unique_ptr<TFile> file(TFile::Open(mLocalRespFile.data(), "READ"));
+    if (!file) {
+      LOG(fatal) << "Cannot open response file " << mLocalRespFile;
+    }
+    mDigitizer.getParams().setAlpSimResponse((const o2::itsmft::AlpideSimResponse*)file->Get("response1"));
+  }
+
   void updateTimeDependentParams(ProcessingContext& pc)
   {
     static bool initOnce{false};
@@ -244,6 +255,7 @@ class TRKDPLDigitizerTask : BaseDPLDigitizer
       // if (oTRKParams::Instance().useDeadChannelMap) {
       //   pc.inputs().get<o2::itsmft::NoiseMap*>("TRK_dead"); // trigger final ccdb update
       // }
+      pc.inputs().get<o2::itsmft::AlpideSimResponse*>("TRK_aptsresp");
 
       // init digitizer
       mDigitizer.init();
@@ -264,12 +276,25 @@ class TRKDPLDigitizerTask : BaseDPLDigitizer
     //   mDigitizer.setDeadChannelsMap((o2::itsmft::NoiseMap*)obj);
     //   return;
     // }
+    if (matcher == ConcreteDataMatcher(mOrigin, "APTSRESP", 0)) {
+      LOG(info) << mID.getName() << " loaded APTSResponseData";
+      if (mLocalRespFile.empty()) {
+        LOG(info) << "Using CCDB/APTS response file";
+        mDigitizer.getParams().setAlpSimResponse((const o2::itsmft::AlpideSimResponse*)obj);
+        mDigitizer.setResponseName("APTS");
+      } else {
+        LOG(info) << "Response function will be loaded from local file: " << mLocalRespFile;
+        setLocalResponseFunction();
+        mDigitizer.setResponseName("ALICE3");
+      }
+    }
   }
 
  private:
   bool mWithMCTruth{true};
   bool mFinished{false};
   bool mDisableQED{false};
+  std::string mLocalRespFile{""};
   const o2::detectors::DetID mID{o2::detectors::DetID::TRK};
   const o2::header::DataOrigin mOrigin{o2::header::gDataOriginTRK};
   o2::trk::Digitizer mDigitizer{};
@@ -297,11 +322,14 @@ DataProcessorSpec getTRKDigitizerSpec(int channel, bool mctruth)
   // if (oTRKParams::Instance().useDeadChannelMap) {
   //   inputs.emplace_back("TRK_dead", "TRK", "DEADMAP", 0, Lifetime::Condition, ccdbParamSpec("TRK/Calib/DeadMap"));
   // }
+  inputs.emplace_back("TRK_aptsresp", "TRK", "APTSRESP", 0, Lifetime::Condition, ccdbParamSpec("IT3/Calib/APTSResponse"));
 
   return DataProcessorSpec{detStr + "Digitizer",
                            inputs, makeOutChannels(detOrig, mctruth),
                            AlgorithmSpec{adaptFromTask<TRKDPLDigitizerTask>(mctruth)},
-                           Options{{"disable-qed", o2::framework::VariantType::Bool, false, {"disable QED handling"}}}};
+                           Options{
+                             {"disable-qed", o2::framework::VariantType::Bool, false, {"disable QED handling"}},
+                             {"local-response-file", o2::framework::VariantType::String, "", {"use response file saved locally at this path/filename"}}}};
 }
 
 } // namespace o2::trk

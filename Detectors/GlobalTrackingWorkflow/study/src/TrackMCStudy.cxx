@@ -83,7 +83,7 @@ using TBracket = o2::math_utils::Bracketf_t;
 
 using timeEst = o2::dataformats::TimeStampWithError<float, float>;
 
-class TrackMCStudy : public Task
+class TrackMCStudy final : public Task
 {
  public:
   TrackMCStudy(std::shared_ptr<DataRequest> dr, std::shared_ptr<o2::base::GRPGeomRequest> gr, GTrackID::mask_t src, const o2::tpc::CorrectionMapsLoaderGloOpts& sclOpts, bool checkSV)
@@ -1303,6 +1303,7 @@ void TrackMCStudy::processITSTracks(const o2::globaltracking::RecoContainer& rec
   const auto itsClRefs = recoData.getITSTracksClusterRefs();
   const auto clusITS = recoData.getITSClusters();
   const auto patterns = recoData.getITSClustersPatterns();
+  const auto& params = o2::trackstudy::TrackMCStudyConfig::Instance();
   auto pattIt = patterns.begin();
   mITSClustersArray.clear();
   mITSClustersArray.reserve(clusITS.size());
@@ -1324,7 +1325,7 @@ void TrackMCStudy::processITSTracks(const o2::globaltracking::RecoContainer& rec
     const auto& itsLb = itsLbls[itr];
     //    LOGP(info,"proc {} {} {}",itr0, itr, itsLb.asString());
     int nCl = itsTr.getNClusters();
-    if (itsLb.isFake() || nCl != 7) {
+    if (itsLb.isFake() || nCl < params.minITSClForITSoutput) {
       continue;
     }
     auto entrySel = mSelMCTracks.find(itsLb);
