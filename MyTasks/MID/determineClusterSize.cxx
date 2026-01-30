@@ -220,11 +220,12 @@ void processClusterPosHist(std::vector<clusterPosHist*> clusterPosHistograms, bo
         clusterHist->clusterPosition->SetLineColor(kBlack);
         clusterHist->clusterPosition->SetMaximum(1.0);
         clusterHist->clusterPosition->SetMinimum(0.0001);
+        clusterHist->clusterPosition->SetStats(0);
         clusterHist->clusterPosition->Draw("SAME");
 
         clusterPDF_current->SetLineColor(kRed);
         clusterPDF_current->SetLineWidth(2);
-        clusterPDF_current->DrawClone("SAME");
+        clusterPDF_current->Draw("SAME");
 
         // clusterPDF_fit->SetLineColor(kBlue);
         // clusterPDF_fit->SetLineWidth(2);
@@ -232,8 +233,8 @@ void processClusterPosHist(std::vector<clusterPosHist*> clusterPosHistograms, bo
 
         // Add a legend
         TLegend* legend = new TLegend(0.6, 0.7, 0.9, 0.9);
-        legend->AddEntry(clusterHist->clusterPosition, legendLabel, "l");
-        legend->AddEntry(clusterPDF_current, "Current O2 PDF (Run 2)", "l");
+        //legend->AddEntry(clusterHist->clusterPosition, legendLabel, "l");
+        legend->AddEntry(clusterPDF_current, "Current O2 PDF", "l");
         //legend->AddEntry(clusterPDF_fit, "Fitted PDF", "l");
         legend->Draw("SAME");
 
@@ -579,7 +580,7 @@ std::vector<clusterPosHist*> initializeClusterPosHist() {
                 Double_t stripWidth = o2::mid::geoparams::getStripUnitPitchSize(hist->chamber) * static_cast<Double_t>(hist->pitch) * 10; // in mm
                 const Int_t nBins = 2 * 32 / hist->pitch; // number of bins for the histogram
                 hist->clusterPosition = new TH1F(Form("strip_position_de%i_cathode%i_pitch%i", deId, cathode, indexToPitch(pitch)), 
-                                                Form("Strip Position (mm) for DE %i, Cathode %i, Pitch %i, Chamber %i; x (mm); f(x)", deId, cathode, indexToPitch(pitch), hist->chamber), nBins, 0.0, (nBins/2) * stripWidth);
+                                                Form("Strip Position (mm) for DE %i, Cathode %i, Pitch %i; x (mm); f(x)", deId, cathode, indexToPitch(pitch)), nBins, 0.0, (nBins/2) * stripWidth);
                 hist->clusterPosition->Sumw2();
                 clusterPosHistograms.push_back(hist);
             }
