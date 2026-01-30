@@ -53,6 +53,7 @@ struct cluster {
 };
 
 struct clusterSizeHist {
+    uint8_t deId;     ///< Detection element ID
     uint8_t cathode;     ///< Cathode (Bending = 0; Non-bending = 1)
     int pitch;       ///< Strip pitch
     TH1D* clusterSize; ///< Histogram of strip positions (x)
@@ -284,14 +285,14 @@ DPMAP* accessHVObjectCCDB(int runNumber) {
 }
 
 void processClustersSize(std::vector<cluster*> midClusters) {
-    // vector of cluster size histograms for fitting
+    // Initialize histograms segmented by deId/cathode/pitch
     std::vector<clusterSizeHist*> clusterSizeHistograms = initializeClusterSizeHist();
 
     // loop over preClusters
     for (auto cluster : midClusters) {
-        // fill cluster size histograms
+        // Fill histograms segmented by deId/cathode/pitch
         for (auto& hist : clusterSizeHistograms) {
-            if (hist->cathode == cluster->cathode && hist->pitch == cluster->pitch) {
+            if (hist->deId == cluster->deId && hist->cathode == cluster->cathode && hist->pitch == cluster->pitch) {
                 hist->clusterSize->Fill(cluster->nStrips);
                 break;
             }
@@ -301,10 +302,11 @@ void processClustersSize(std::vector<cluster*> midClusters) {
     // read out histograms
     auto outFile = new TFile("cluster_size_histograms.root", "RECREATE");
 
+    // Write histograms segmented by deId/cathode/pitch
     for (auto hist : clusterSizeHistograms) {
         hist->clusterSize->Write();
 
-        TCanvas* canvas = new TCanvas(Form("cluster_size_cathode%i_pitch%i_canvas", hist->cathode, hist->pitch), "", 800, 600);
+        TCanvas* canvas = new TCanvas(Form("cluster_size_de%i_cathode%i_pitch%i_canvas", hist->deId, hist->cathode, hist->pitch), "", 800, 600);
         canvas->SetLogy(); // Set y-axis to log scale
         hist->clusterSize->Draw("E1"); // Draw histogram with error bars and horizontal lines
         canvas->Write(); // Write the canvas to the output file
@@ -540,21 +542,24 @@ int indexToPitch(int index) {
 }
 
 std::vector<clusterSizeHist*> initializeClusterSizeHist() {
-    // initialize cluster size histograms
     std::vector<clusterSizeHist*> clusterSizeHistograms;
 
-    // loop over cathodes and strip pitches
-    for (int cathode = 0; cathode < 2; cathode++) { // 0: bending, 1: non-bending
-        for (int pitch = 0; pitch < nPitches; pitch++) { // strip pitches
-            if (pitch == 0 && cathode == 1) continue; // skip non-bending plane for pitch 1
-            auto hist = new clusterSizeHist();
-            hist->cathode = cathode;
-            hist->pitch = indexToPitch(pitch);
-            const Int_t nBins = 64 / hist->pitch; // number of bins for the histogram
-            hist->clusterSize = new TH1D(Form("cluster_size_cathode%i_pitch%i", cathode, indexToPitch(pitch)), 
-                                         Form("Cluster Size for Cathode %i, Pitch %i; nStrips; Count", cathode, indexToPitch(pitch)), nBins, 1, nBins + 1);
-            hist->clusterSize->Sumw2();
-            clusterSizeHistograms.push_back(hist);
+    // Loop over all MID deIds
+    for (int deId = 0; deId < o2::mid::detparams::NDetectionElements; deId++) {
+        for (int cathode = 0; cathode < 2; cathode++) { // 0: bending, 1: non-bending
+            for (int pitch = 0; pitch < nPitches; pitch++) { // strip pitches
+                if (pitch == 0 && cathode == 1) continue; // Skip non-bending plane for pitch 1
+                auto hist = new clusterSizeHist();
+                hist->deId = deId;
+                hist->cathode = cathode;
+                hist->pitch = indexToPitch(pitch);
+                const Int_t nBins = 64 / hist->pitch; // Number of bins for the histogram
+                hist->clusterSize = new TH1D(Form("cluster_size_de%i_cathode%i_pitch%i", deId, cathode, indexToPitch(pitch)),
+                                             Form("Cluster Size for DE %i, Cathode %i, Pitch %i; nStrips; Count", deId, cathode, indexToPitch(pitch)),
+                                             nBins, 1, nBins + 1);
+                hist->clusterSize->Sumw2();
+                clusterSizeHistograms.push_back(hist);
+            }
         }
     }
 
