@@ -201,19 +201,18 @@ void processClusterPosHist(std::vector<clusterPosHist*> clusterPosHistograms, bo
         clusterPDF_current->SetParameters(chamberRespParam.getParB(clusterHist->cathode, clusterHist->deId), -52.70, 6.089, -0.5e-3, 8.3e-4, HV_value, 0.0); // current parameters
         for (int i = 0; i < 7; ++i) clusterPDF_current->FixParameter(i, clusterPDF_current->GetParameter(i)); // fix all parameters (for comparison only)
 
-        // define my own fit function
-        // auto clusterPDF_fit = new TF1(Form("clusterPDF_fit_de%i_cathode%i_pitch%i", clusterHist->deId, clusterHist->cathode, clusterHist->pitch), pdfFunc, 0, xMax, 7);
-        // clusterPDF_fit->SetParNames("b", "a0", "a1", "c0", "c1", "hv", "theta");
-        // clusterPDF_fit->SetParameters(chamberRespParam.getParB(clusterHist->cathode, clusterHist->deId), -52.70, 6.089, -0.5e-3, 8.3e-4, HV_value, 0.0); // initial parameters
-        // //for (int i = 0; i < 7; ++i) clusterPDF_fit->FixParameter(i, clusterPDF_fit->GetParameter(i)); // fix all parameters (for comparison only)
-        // //for (int i = 1; i < 7; ++i) clusterPDF_fit->FixParameter(i, clusterPDF_fit->GetParameter(i)); // fix all except 'b'
-        // clusterPDF_fit->FixParameter(5, HV_value); // fix HV parameter
-        // clusterPDF_fit->FixParameter(6, 0.0); // fix theta parameter
+        // define my own function for fitting
+        auto clusterPDF_fit = new TF1(Form("clusterPDF_fit_de%i_cathode%i_pitch%i", clusterHist->deId, clusterHist->cathode, clusterHist->pitch), pdfFunc, 0, xMax, 7);
+        clusterPDF_fit->SetParNames("b", "a0", "a1", "c0", "c1", "hv", "theta");
+        clusterPDF_fit->SetParameters(chamberRespParam.getParB(clusterHist->cathode, clusterHist->deId), -52.70, 6.089, -0.5e-3, 8.3e-4, HV_value, 0.0); // initial parameters
+        //for (int i = 1; i < 7; ++i) clusterPDF_fit->FixParameter(i, clusterPDF_fit->GetParameter(i)); // fix all except 'b'
+        clusterPDF_fit->FixParameter(5, HV_value); // fix HV parameter
+        clusterPDF_fit->FixParameter(6, 0.0); // fix theta parameter
 
-        // // fit the histogram with the PDF
-        // double fitMin = clusterHist->clusterPosition->GetBinLowEdge(1); // Lower edge of the first bin
-        // double fitMax = clusterHist->clusterPosition->GetBinLowEdge(17); // Lower edge of the seventeenth bin (end of the first 16 bins)
-        // clusterHist->clusterPosition->Fit(Form("clusterPDF_fit_de%i_cathode%i_pitch%i", clusterHist->deId, clusterHist->cathode, clusterHist->pitch), "R", "", fitMin, fitMax);
+        // fit the histogram with the PDF
+        double fitMin = clusterHist->clusterPosition->GetBinLowEdge(1); // Lower edge of the first bin
+        double fitMax = clusterHist->clusterPosition->GetBinLowEdge(9); // Lower edge of the nineth bin (end of the first 8 bins)
+        clusterHist->clusterPosition->Fit(Form("clusterPDF_fit_de%i_cathode%i_pitch%i", clusterHist->deId, clusterHist->cathode, clusterHist->pitch), "R", "", fitMin, fitMax);
 
         // plot first hist, current PDF, and fitted function together
         TCanvas* canvasCheckFirst = new TCanvas(Form("strip_position_de%i_cathode%i_pitch%i", clusterHist->deId, clusterHist->cathode, clusterHist->pitch), "Fired Probability vs Distance", 800, 600);
@@ -228,15 +227,15 @@ void processClusterPosHist(std::vector<clusterPosHist*> clusterPosHistograms, bo
         clusterPDF_current->SetLineWidth(2);
         clusterPDF_current->Draw("SAME");
 
-        // clusterPDF_fit->SetLineColor(kBlue);
-        // clusterPDF_fit->SetLineWidth(2);
-        // clusterPDF_fit->DrawClone("SAME");
+        clusterPDF_fit->SetLineColor(kBlue);
+        clusterPDF_fit->SetLineWidth(2);
+        clusterPDF_fit->DrawClone("SAME");
 
         // Add a legend
         TLegend* legend = new TLegend(0.6, 0.7, 0.9, 0.9);
-        //legend->AddEntry(clusterHist->clusterPosition, legendLabel, "l");
+        legend->AddEntry(clusterHist->clusterPosition, legendLabel, "l");
         legend->AddEntry(clusterPDF_current, "Current O2 PDF", "l");
-        //legend->AddEntry(clusterPDF_fit, "Fitted PDF", "l");
+        legend->AddEntry(clusterPDF_fit, "Fitted PDF", "l");
         legend->Draw("SAME");
 
         canvasCheckFirst->Write();
@@ -288,6 +287,11 @@ void processClustersSize(std::vector<cluster*> midClusters) {
     // Initialize histograms segmented by deId/cathode/pitch
     std::vector<clusterSizeHist*> clusterSizeHistograms = initializeClusterSizeHist();
 
+    // Initialize histograms aggregated by cathode/pitch
+    std::map<std::pair<int, int>, TH1D*> aggregatedHistograms;
+
+    std::cout << "Number of processed MID clusters: " << midClusters.size() << std::endl;
+
     // loop over preClusters
     for (auto cluster : midClusters) {
         // Fill histograms segmented by deId/cathode/pitch
@@ -297,6 +301,17 @@ void processClustersSize(std::vector<cluster*> midClusters) {
                 break;
             }
         }
+
+        // Fill aggregated histograms by cathode/pitch
+        auto key = std::make_pair(cluster->cathode, cluster->pitch);
+        if (aggregatedHistograms.find(key) == aggregatedHistograms.end()) {
+            Int_t nBins = 64 / cluster->pitch;
+            aggregatedHistograms[key] = new TH1D(Form("cluster_size_cathode%i_pitch%i", cluster->cathode, cluster->pitch),
+                                                 Form("Cluster Size for Cathode %i, Pitch %i; nStrips; Count", cluster->cathode, cluster->pitch),
+                                                 nBins, 1, nBins + 1);
+            aggregatedHistograms[key]->Sumw2();
+        }
+        aggregatedHistograms[key]->Fill(cluster->nStrips);
     }
 
     // read out histograms
@@ -304,12 +319,16 @@ void processClustersSize(std::vector<cluster*> midClusters) {
 
     // Write histograms segmented by deId/cathode/pitch
     for (auto hist : clusterSizeHistograms) {
-        hist->clusterSize->Write();
-
-        TCanvas* canvas = new TCanvas(Form("cluster_size_de%i_cathode%i_pitch%i_canvas", hist->deId, hist->cathode, hist->pitch), "", 800, 600);
+        if (hist->clusterSize->GetEntries() == 0) continue; // skip empty histograms
+        TCanvas* canvas = new TCanvas(Form("cluster_size_de%i_cathode%i_pitch%i", hist->deId, hist->cathode, hist->pitch), "", 800, 600);
         canvas->SetLogy(); // Set y-axis to log scale
         hist->clusterSize->Draw("E1"); // Draw histogram with error bars and horizontal lines
         canvas->Write(); // Write the canvas to the output file
+    }
+
+    // Write aggregated histograms by cathode/pitch
+    for (auto& [key, hist] : aggregatedHistograms) {
+        hist->Write();
     }
 
     delete outFile;
