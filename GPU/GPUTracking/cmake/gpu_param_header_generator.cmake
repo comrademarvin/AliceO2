@@ -1,0 +1,98 @@
+# Copyright 2019-2020 CERN and copyright holders of ALICE O2.
+# See https://alice-o2.web.cern.ch/copyright for details of the copyright holders.
+# All rights not expressly granted are reserved.
+#
+# This software is distributed under the terms of the GNU General Public
+# License v3 (GPL Version 3), copied verbatim in the file "COPYING".
+#
+# In applying this license CERN does not waive the privileges and immunities
+# granted to it by virtue of its status as an Intergovernmental Organization
+# or submit itself to any jurisdiction.
+
+# file gpu_param_header_generator.cmake
+# author Gabriele Cimador
+
+function(generate_macros json_content header types arch_key use_ifndef_guard)
+    foreach(TYPE IN LISTS types)
+        string(JSON n_params LENGTH "${json_content}" "${TYPE}")
+        math(EXPR last "${n_params} - 1")
+        foreach(i RANGE 0 ${last})
+            string(JSON param_name MEMBER "${json_content}" "${TYPE}" "${i}")
+            string(JSON n_archs LENGTH "${JSON_CONTENT}" "${TYPE}" "${param_name}")
+            math(EXPR last_arch "${n_archs} - 1")
+            foreach(iArch RANGE 0 ${last_arch})
+                string(JSON arch MEMBER "${JSON_CONTENT}" "${TYPE}" "${param_name}" "${iArch}")
+                if(arch STREQUAL "${arch_key}")
+                    string(JSON param_values GET "${JSON_CONTENT}" "${TYPE}" "${param_name}" "${arch_key}")
+                    if(TYPE STREQUAL "LB")
+                        set(MACRO_NAME "GPUCA_LB_${param_name}")
+                    elseif(TYPE STREQUAL "PAR")
+                        set(MACRO_NAME "GPUCA_PAR_${param_name}")
+                    else()
+                        set(MACRO_NAME "GPUCA_${param_name}")
+                    endif()
+                    set(vals "${param_values}")
+                    string(REGEX REPLACE "^\\[ *" "" vals "${vals}")
+                    string(REGEX REPLACE " *\\]$" "" vals "${vals}")
+                    string(REGEX REPLACE "\"" "" vals "${vals}")
+                    set(MACRO_DEFINITION "#define ${MACRO_NAME} ${vals}")
+                    if(use_ifndef_guard)
+                        # fallback defaults are wrapped in #ifndef
+                        file(APPEND "${header}" "#ifndef ${MACRO_NAME}\n  ${MACRO_DEFINITION}\n#endif\n\n")
+                    else()
+                        file(APPEND "${header}" "${MACRO_DEFINITION}\n")
+                    endif()
+                endif()
+            endforeach()
+        endforeach()
+    endforeach()
+endfunction()
+
+function(generate_gpu_param_header GPU_ARCH OUT_HEADER)
+    set(GPU_PARAM_JSON ${CMAKE_CURRENT_SOURCE_DIR}/Definitions/Parameters/GPUParameters.json)
+    set(TARGET_ARCH "UNKNOWN")
+    if(GPU_ARCH STREQUAL "AUTO")
+        detect_gpu_arch("ALL")
+    else()
+        set(TARGET_ARCH ${GPU_ARCH})
+    endif()
+    file(READ "${GPU_PARAM_JSON}" JSON_CONTENT)
+    set(TMP_HEADER "${OUT_HEADER}.tmp")
+    file(WRITE "${TMP_HEADER}" "#ifndef GPUDEFPARAMETERSDEFAULTS_H\n#define GPUDEFPARAMETERSDEFAULTS_H\n\n")
+    file(APPEND "${TMP_HEADER}" "// This file is auto-generated from gpu_params.json. Do not edit directly.\n")
+    string(REPLACE "," ";" ARCH_LIST "${TARGET_ARCH}")
+    file(APPEND "${TMP_HEADER}" "// Architectures: ${TARGET_ARCH}\n\n")
+    file(APPEND "${TMP_HEADER}" "#if defined(GPUCA_GPUCODE) && !defined(GPUCA_GPUCODE_GENRTC) && !defined(GPUCA_GPUCODE_NO_LAUNCH_BOUNDS) // Avoid including for RTC generation besides normal include protection.\n\n")
+
+    # Types
+    set(TYPES CORE LB PAR)
+    # Per architecture definitions
+    set(_first TRUE)
+    foreach(ARCH IN LISTS ARCH_LIST)
+        if(_first)
+            file(APPEND "${TMP_HEADER}" "#if defined(GPUCA_GPUTYPE_${ARCH})\n\n")
+            set(_first FALSE)
+        else()
+            file(APPEND "${TMP_HEADER}" "#elif defined(GPUCA_GPUTYPE_${ARCH})\n\n")
+        endif()
+        generate_macros("${JSON_CONTENT}" "${TMP_HEADER}" "${TYPES}" "${ARCH}" "")
+    endforeach()
+    if(NOT _first)
+        file(APPEND "${TMP_HEADER}" "#else\n#error GPU TYPE NOT SET\n#endif\n")
+    endif()
+
+    # Default parameters
+    file(APPEND "${TMP_HEADER}" "\n// Default parameters if not defined for the target architecture\n\n")
+    generate_macros("${JSON_CONTENT}" "${TMP_HEADER}" "${TYPES}" "default" "use_ifndef_guard")
+    file(APPEND "${TMP_HEADER}" "#endif // defined(GPUCA_GPUCODE) && !defined(GPUCA_GPUCODE_GENRTC) && !defined(GPUCA_GPUCODE_NO_LAUNCH_BOUNDS)\n\n")
+
+    # CPU fallback
+    file(APPEND "${TMP_HEADER}" "#ifndef GPUCA_GPUCODE_GENRTC //Defaults for non-LB parameters also for CPU fallback\n\n")
+    generate_macros("${JSON_CONTENT}" "${TMP_HEADER}" "PAR" "default_cpu" "use_ifndef_guard")
+    file(APPEND "${TMP_HEADER}" "\n#endif // GPUCA_GPUCODE_GENRTC\n")
+
+    file(APPEND "${TMP_HEADER}" "\n#endif // GPUDEFPARAMETERSDEFAULTS_H\n")
+    file(RENAME "${TMP_HEADER}" "${OUT_HEADER}")
+    message(STATUS "Generated ${OUT_HEADER}")
+    add_custom_target(GPU_PARAM_HEADER_${GPU_ARCH}_ALL ALL DEPENDS ${OUT_HEADER} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/gpu_param_header_generator.cmake ${GPU_PARAM_JSON})
+endfunction()
