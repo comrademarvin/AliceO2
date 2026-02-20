@@ -16,6 +16,7 @@
 #include "TGraphErrors.h"
 #include "TCanvas.h"
 #include "TLegend.h"
+#include "TPaveText.h"
 #include "CommonUtils/ConfigurableParamHelper.h"
 #include "CommonConstants/LHCConstants.h"
 #include "CommonDataFormat/InteractionRecord.h"
@@ -90,15 +91,30 @@ int main(int argc, char* argv[]) {
     }
     bool isMC = std::stoi(argv[1]) != 0;
 
-    auto muonTracksIR = processMuonTracks("muontracks.root");
+    // run on multiple batches of data and combine the results for cluster size and position analysis
+    const int numBatches = 2;
+    std::string recoFilesDirectory[numBatches] = {"/home/stephan/MID_cluster/run_558801_batch_1", "/home/stephan/MID_cluster/run_558801_batch_2"};
 
-    const char* midDigitsFile = isMC ? "middigits.root" : "mid-digits-decoded.root";
+    std::vector<cluster*> combinedClusters;
 
-    auto midClusters = processMIDdigits(midDigitsFile, "mid-reco.root", muonTracksIR, isMC, true);
+    for (int i = 0; i < numBatches; ++i) {
+        std::string muonTracksFile = recoFilesDirectory[i] + "/muontracks.root";
+        std::string midDigitsFile = recoFilesDirectory[i] + (isMC ? "/middigits.root" : "/mid-digits-decoded.root");
+        std::string midRecoFile = recoFilesDirectory[i] + "/mid-reco.root";
 
-    processClustersSize(midClusters);
+        auto muonTracksIR = processMuonTracks(muonTracksFile.c_str());
+        auto midClusters = processMIDdigits(midDigitsFile.c_str(), midRecoFile.c_str(), muonTracksIR, isMC, true);
 
-    auto clusterPosHist = processClustersPosition(midClusters);
+        std::cout << "Number of MID clusters in batch " << i+1 << ": " << midClusters.size() << std::endl;
+
+        combinedClusters.insert(combinedClusters.end(), midClusters.begin(), midClusters.end());
+    }
+
+    std::cout << "Total number of MID clusters across all batches: " << combinedClusters.size() << std::endl;
+
+    processClustersSize(combinedClusters);
+
+    auto clusterPosHist = processClustersPosition(combinedClusters);
 
     processClusterPosHist(clusterPosHist, isMC);
 
@@ -180,6 +196,13 @@ void processClusterPosHist(std::vector<clusterPosHist*> clusterPosHistograms, bo
 
     const char* legendLabel = isMC ? "O2 Sim" : "Data (Run 3)";
 
+    // Open output file for writing fitted parameters
+    std::ofstream fitParamsFile("fitted_parameters.txt");
+    fitParamsFile << "deId,cathode,b,a0,a1,c0,c1\n";
+
+    // Map to store cumulative fitted parameters for each deId/cathode
+    std::map<std::pair<int, int>, std::vector<std::array<double, 5>>> fitParamsMap;
+
     // create current O2 PDF and parameters for comparison and fitting
     o2::mid::ChamberResponseParams chamberRespParam = o2::mid::createDefaultChamberResponseParams();
     
@@ -196,23 +219,46 @@ void processClusterPosHist(std::vector<clusterPosHist*> clusterPosHistograms, bo
         double xMax = clusterHist->clusterPosition->GetXaxis()->GetXmax();
 
         // define current PDF for comparison
+        auto currenBparam = chamberRespParam.getParB(clusterHist->cathode, clusterHist->deId);
+        std::pair<double, double> currentAparam(-52.70, 6.089); // a0, a1
+        std::pair<double, double> currentCparam(-0.5e-3, 8.3e-4); // c0, c1
         auto clusterPDF_current = new TF1(Form("clusterPDF_current_de%i_cathode%i_pitch%i", clusterHist->deId, clusterHist->cathode, clusterHist->pitch), pdfFunc, 0, xMax, 7);
         clusterPDF_current->SetParNames("b", "a0", "a1", "c0", "c1", "hv", "theta");
-        clusterPDF_current->SetParameters(chamberRespParam.getParB(clusterHist->cathode, clusterHist->deId), -52.70, 6.089, -0.5e-3, 8.3e-4, HV_value, 0.0); // current parameters
+        clusterPDF_current->SetParameters(currenBparam, currentAparam.first, currentAparam.second, currentCparam.first, currentCparam.second, HV_value, 0.0); // current parameters
         for (int i = 0; i < 7; ++i) clusterPDF_current->FixParameter(i, clusterPDF_current->GetParameter(i)); // fix all parameters (for comparison only)
 
         // define my own function for fitting
         auto clusterPDF_fit = new TF1(Form("clusterPDF_fit_de%i_cathode%i_pitch%i", clusterHist->deId, clusterHist->cathode, clusterHist->pitch), pdfFunc, 0, xMax, 7);
         clusterPDF_fit->SetParNames("b", "a0", "a1", "c0", "c1", "hv", "theta");
-        clusterPDF_fit->SetParameters(chamberRespParam.getParB(clusterHist->cathode, clusterHist->deId), -52.70, 6.089, -0.5e-3, 8.3e-4, HV_value, 0.0); // initial parameters
-        //for (int i = 1; i < 7; ++i) clusterPDF_fit->FixParameter(i, clusterPDF_fit->GetParameter(i)); // fix all except 'b'
+        clusterPDF_fit->SetParameters(currenBparam, currentAparam.first, currentAparam.second, currentCparam.first, currentCparam.second, HV_value, 0.0); // initial parameters
+
+        // Set parameter limits for fitting
+        double percentageChangeB = 0.9; // 'b' parameter needs less constraining
+        double percentageChangeAC = 0.5; // 'a' and 'c' parameters need more constraining
+        clusterPDF_fit->SetParLimits(0, currenBparam * (1.0 - percentageChangeB), currenBparam * (1.0 + percentageChangeB)); // b
+        clusterPDF_fit->SetParLimits(1, currentAparam.first * (1.0 + percentageChangeAC), currentAparam.first * (1.0 - percentageChangeAC)); // a0 (negative)
+        clusterPDF_fit->SetParLimits(2, currentAparam.second * (1.0 - percentageChangeAC), currentAparam.second * (1.0 + percentageChangeAC)); // a1
+        clusterPDF_fit->SetParLimits(3, currentCparam.first * (1.0 + percentageChangeAC), currentCparam.first * (1.0 - percentageChangeAC)); // c0 (negative)
+        clusterPDF_fit->SetParLimits(4, currentCparam.second * (1.0 - percentageChangeAC), currentCparam.second * (1.0 + percentageChangeAC)); // c1
         clusterPDF_fit->FixParameter(5, HV_value); // fix HV parameter
         clusterPDF_fit->FixParameter(6, 0.0); // fix theta parameter
 
         // fit the histogram with the PDF
         double fitMin = clusterHist->clusterPosition->GetBinLowEdge(1); // Lower edge of the first bin
-        double fitMax = clusterHist->clusterPosition->GetBinLowEdge(9); // Lower edge of the nineth bin (end of the first 8 bins)
+        int lastNonEmptyBin = clusterHist->clusterPosition->FindLastBinAbove(0); // Find the last non-empty bin
+        double fitMax = clusterHist->clusterPosition->GetBinLowEdge(lastNonEmptyBin + 1); // Upper edge of the last non-empty bin
         clusterHist->clusterPosition->Fit(Form("clusterPDF_fit_de%i_cathode%i_pitch%i", clusterHist->deId, clusterHist->cathode, clusterHist->pitch), "R", "", fitMin, fitMax);
+
+        // Store the fitted parameters for this deId/cathode
+        auto key = std::make_pair(clusterHist->deId, clusterHist->cathode);
+        std::array<double, 5> params = {
+            clusterPDF_fit->GetParameter(0), // b
+            clusterPDF_fit->GetParameter(1), // a0
+            clusterPDF_fit->GetParameter(2), // a1
+            clusterPDF_fit->GetParameter(3), // c0
+            clusterPDF_fit->GetParameter(4)  // c1
+        };
+        fitParamsMap[key].push_back(params);
 
         // plot first hist, current PDF, and fitted function together
         TCanvas* canvasCheckFirst = new TCanvas(Form("strip_position_de%i_cathode%i_pitch%i", clusterHist->deId, clusterHist->cathode, clusterHist->pitch), "Fired Probability vs Distance", 800, 600);
@@ -238,8 +284,44 @@ void processClusterPosHist(std::vector<clusterPosHist*> clusterPosHistograms, bo
         legend->AddEntry(clusterPDF_fit, "Fitted PDF", "l");
         legend->Draw("SAME");
 
+        // Add a label with fit parameters and errors
+        TPaveText* fitParamsLabel = new TPaveText(0.15, 0.6, 0.45, 0.9, "NDC");
+        fitParamsLabel->SetBorderSize(1);
+        fitParamsLabel->SetFillColor(0);
+        fitParamsLabel->SetTextAlign(12);
+
+        for (int i = 0; i < 7; ++i) {
+            TString paramText = TString::Format("%s = %.3g #pm %.3g", clusterPDF_fit->GetParName(i), clusterPDF_fit->GetParameter(i), clusterPDF_fit->GetParError(i));
+            fitParamsLabel->AddText(paramText);
+        }
+        fitParamsLabel->Draw("SAME");
+
         canvasCheckFirst->Write();
     }
+
+    // Calculate average fitted parameters for each deId/cathode and write to the text file
+    for (const auto& [key, paramsList] : fitParamsMap) {
+        int deId = key.first;
+        int cathode = key.second;
+
+        std::array<double, 5> avgParams = {0.0, 0.0, 0.0, 0.0, 0.0};
+        for (const auto& params : paramsList) {
+            for (size_t i = 0; i < avgParams.size(); ++i) {
+                avgParams[i] += params[i];
+            }
+        }
+        for (size_t i = 0; i < avgParams.size(); ++i) {
+            avgParams[i] /= paramsList.size();
+        }
+
+        fitParamsFile << deId << "," << cathode
+                        << "," << roundf(avgParams[0] * 100) / 100 // b
+                        << "," << roundf(avgParams[1] * 100) / 100 << "," << roundf(avgParams[2] * 1000) / 1000 // a0, a1
+                        << "," << roundf(avgParams[3] * 10e6) / 10e6 << "," << roundf(avgParams[4] * 10e6) / 10e6 << "\n"; // c0, c1
+    }
+
+    // Close the output file
+    fitParamsFile.close();
 
     delete outFile;
 }
@@ -446,7 +528,7 @@ std::vector<cluster*> processMIDdigits(const char *fileMIDdigits, const char *fi
                 }
             }
 
-            if (muonTrackCount > 0) {
+            if (muonTrackCount == 1) { // number of muon tracks per ROF to consider
                 nMuonTracksROF->Fill(muonTrackCount);
 
                 // subspan of digits for the ROF where there are tracks
