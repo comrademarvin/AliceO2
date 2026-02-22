@@ -53,8 +53,8 @@ Digitizer createDigitizerNoClusterSize()
 {
   /// Returns the default chamber response
   ChamberResponseParams params = createDefaultChamberResponseParams();
-  params.setParA(0., 0.);
-  params.setParC(0., 0.);
+  // params.setParA(0., 0.);
+  // params.setParC(0., 0.);
   ChamberHV hv = createDefaultChamberHV();
 
   return Digitizer(ChamberResponse(params, hv), createDefaultChamberEfficiencyResponse(), createDefaultTransformer());

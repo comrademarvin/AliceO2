@@ -196,9 +196,9 @@ void processClusterPosHist(std::vector<clusterPosHist*> clusterPosHistograms, bo
 
     const char* legendLabel = isMC ? "O2 Sim" : "Data (Run 3)";
 
-    // Open output file for writing fitted parameters
+    // Open output file to copy/paste fitted parameters in O2
     std::ofstream fitParamsFile("fitted_parameters.txt");
-    fitParamsFile << "deId,cathode,b,a0,a1,c0,c1\n";
+    fitParamsFile << "params.setParAll(cathode,deId,b,a0,a1,c0,c1)\n";
 
     // Map to store cumulative fitted parameters for each deId/cathode
     std::map<std::pair<int, int>, std::vector<std::array<double, 5>>> fitParamsMap;
@@ -233,7 +233,7 @@ void processClusterPosHist(std::vector<clusterPosHist*> clusterPosHistograms, bo
         clusterPDF_fit->SetParameters(currenBparam, currentAparam.first, currentAparam.second, currentCparam.first, currentCparam.second, HV_value, 0.0); // initial parameters
 
         // Set parameter limits for fitting
-        double percentageChangeB = 0.9; // 'b' parameter needs less constraining
+        double percentageChangeB = 0.8; // 'b' parameter needs less constraining
         double percentageChangeAC = 0.5; // 'a' and 'c' parameters need more constraining
         clusterPDF_fit->SetParLimits(0, currenBparam * (1.0 - percentageChangeB), currenBparam * (1.0 + percentageChangeB)); // b
         clusterPDF_fit->SetParLimits(1, currentAparam.first * (1.0 + percentageChangeAC), currentAparam.first * (1.0 - percentageChangeAC)); // a0 (negative)
@@ -314,10 +314,11 @@ void processClusterPosHist(std::vector<clusterPosHist*> clusterPosHistograms, bo
             avgParams[i] /= paramsList.size();
         }
 
-        fitParamsFile << deId << "," << cathode
+        fitParamsFile << "params.setParAll(" << cathode << "," << deId
                         << "," << roundf(avgParams[0] * 100) / 100 // b
                         << "," << roundf(avgParams[1] * 100) / 100 << "," << roundf(avgParams[2] * 1000) / 1000 // a0, a1
-                        << "," << roundf(avgParams[3] * 10e6) / 10e6 << "," << roundf(avgParams[4] * 10e6) / 10e6 << "\n"; // c0, c1
+                        << "," << roundf(avgParams[3] * 10e6) / 10e6 << "," << roundf(avgParams[4] * 10e6) / 10e6 // c0, c1
+                        << ");\n";
     }
 
     // Close the output file

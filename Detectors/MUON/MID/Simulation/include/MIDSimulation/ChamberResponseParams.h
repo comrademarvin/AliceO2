@@ -25,23 +25,24 @@ namespace mid
 class ChamberResponseParams
 {
  public:
-  double getParA(double hv) const;
+  double getParA(int cathode, int deId, double hv) const;
   double getParB(int cathode, int deId) const;
-  double getParC(double hv) const;
+  double getParC(int cathode, int deId, double hv) const;
 
   /// Gets the parameters to compute A
-  const std::array<double, 2> getParametersA() const { return mParA; }
+  const std::pair<double,double> getParametersA(int cathode, int deId) const;
 
   /// Gets the parameters to compute C
-  const std::array<double, 2> getParametersC() const { return mParC; }
+  const std::pair<double,double> getParametersC(int cathode, int deId) const;
 
-  void setParA(double a0, double a1);
-  void setParC(double c0, double c1);
+  void setParA(int cathode, int deId, double a0, double a1);
+  void setParC(int cathode, int deId, double c0, double c1);
   void setParB(int cathode, int deId, double val);
+  void setParAll(int cathode, int deId, double b, double a0, double a1, double c0, double c1);
 
  private:
-  std::array<double, 2> mParA;   ///< Values to compute first parameter
-  std::array<double, 2> mParC;   ///< Values to compute third parameter
+  std::array<std::pair<double,double>, 144> mParA;   ///< Values to compute first parameter
+  std::array<std::pair<double,double>, 144> mParC;   ///< Values to compute third parameter
   std::array<double, 144> mParB; ///< Array of second parameter
 };
 

@@ -44,9 +44,9 @@ double ChamberResponse::getFiredProbability(double distance, int cathode, int de
 
   // Need to convert the distance from cm to mm
   double distMM = distance * 10.;
-  double parA = mParams.getParA(mHV.getHV(deId));
+  double parA = mParams.getParA(cathode, deId, mHV.getHV(deId));
   double parB = mParams.getParB(cathode, deId);
-  double parC = mParams.getParC(mHV.getHV(deId));
+  double parC = mParams.getParC(cathode, deId, mHV.getHV(deId));
   double costheta = std::cos(theta);
   return (parC + parA / (parA + costheta * std::pow(distMM, parB))) / (1 + parC);
 }
@@ -73,8 +73,8 @@ double ChamberResponse::firedProbabilityFunction(double* var, double* par)
   int deId = (int)par[1];
 
   mParams.setParB(cathode, deId, par[3]);
-  mParams.setParA(par[4], par[5]);
-  mParams.setParC(par[6], par[7]);
+  mParams.setParA(cathode, deId, par[4], par[5]);
+  mParams.setParC(cathode, deId, par[6], par[7]);
 
   return getFiredProbability(var[0], cathode, deId, par[2]);
 }
