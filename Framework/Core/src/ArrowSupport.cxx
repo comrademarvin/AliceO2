@@ -564,7 +564,7 @@ o2::framework::ServiceSpec ArrowSupport::arrowBackendSpec()
                        if (dc.options.count("timeframes-rate-limit") && dc.options["timeframes-rate-limit"].defaulted() == false) {
                          config->maxTimeframes = std::stoll(dc.options["timeframes-rate-limit"].as<std::string>());
                        } else {
-                         config->maxTimeframes = readers * DefaultsHelpers::pipelineLength();
+                         config->maxTimeframes = readers * DefaultsHelpers::pipelineLength(dc);
                        }
                        static bool once = false;
                        // Until we guarantee this is called only once...
@@ -581,7 +581,6 @@ o2::framework::ServiceSpec ArrowSupport::arrowBackendSpec()
       auto spawner = std::ranges::find_if(workflow, [](DataProcessorSpec const& spec) { return spec.name.starts_with("internal-dpl-aod-spawner"); });
       auto analysisCCDB = std::ranges::find_if(workflow, [](DataProcessorSpec const& spec) { return spec.name.starts_with("internal-dpl-aod-ccdb"); });
       auto builder = std::ranges::find_if(workflow, [](DataProcessorSpec const& spec) { return spec.name.starts_with("internal-dpl-aod-index-builder"); });
-      auto reader = std::ranges::find_if(workflow, [](DataProcessorSpec const& spec) { return spec.name.starts_with("internal-dpl-aod-reader"); });
       auto writer = std::ranges::find_if(workflow, [](DataProcessorSpec const& spec) { return spec.name.starts_with("internal-dpl-aod-writer"); });
       auto& dec = ctx.services().get<DanglingEdgesContext>();
       dec.requestedAODs.clear();
@@ -659,6 +658,9 @@ o2::framework::ServiceSpec ArrowSupport::arrowBackendSpec()
         workflow.erase(writer);
       }
 
+      // removing writer would invalidate the reader iterator if it was created before
+      auto reader = std::ranges::find_if(workflow, [](DataProcessorSpec const& spec) { return spec.name.starts_with("internal-dpl-aod-reader"); });
+
       if (reader != workflow.end()) {
         // If reader and/or builder were adjusted, remove unneeded outputs
         // update currently requested AODs
@@ -678,8 +680,12 @@ o2::framework::ServiceSpec ArrowSupport::arrowBackendSpec()
           workflow.erase(reader);
         } else {
           // load reader algorithm before deployment
-          auto mctracks2aod = std::find_if(workflow.begin(), workflow.end(), [](auto const& x) { return x.name == "mctracks-to-aod"; });
-          if (mctracks2aod == workflow.end()) { // add normal reader algorithm only if no on-the-fly generator is injected
+          auto tfnsource = std::ranges::find_if(workflow, [](DataProcessorSpec const& spec) {
+            return std::ranges::any_of(spec.outputs, [](OutputSpec const& output) {
+              return DataSpecUtils::match(output, "TFN", "TFNumber", 0);
+            });
+          });
+          if (tfnsource == workflow.end()) { // add normal reader algorithm only if no on-the-fly generator is injected
             reader->algorithm = CommonDataProcessors::wrapWithTimesliceConsumption(PluginManager::loadAlgorithmFromPlugin("O2FrameworkAnalysisSupport", "ROOTFileReader", ctx));
           } // otherwise the algorithm was set in injectServiceDevices
         }
