@@ -9,6 +9,7 @@
 #include "TTree.h"
 #include "TH1D.h"
 #include "TF1.h"
+#include "TLine.h"
 #include "TTreeReader.h"
 #include "TTreeReaderValue.h"
 #include "TGeoManager.h"
@@ -71,6 +72,15 @@ struct clusterPosHist {
 };
 std::vector<clusterPosHist*> initializeClusterPosHist();
 
+struct fitParams {
+    int deId;
+    int cathode;
+    int pitch;
+    int nBins;
+    int nEntries;
+    std::array<double, 5> params; // b, a0, a1, c0, c1
+};
+
 std::tuple<TFile *, TTreeReader *> loadData(const char *fileName, const char *treeName);
 std::vector<o2::InteractionRecord> processMuonTracks(const char *fileName);
 std::vector<cluster*> processMIDdigits(const char *fileMIDdigits, const char *fileMIDtracks, std::vector<o2::InteractionRecord> muonTracksIR, bool isMC, bool removeMultColumns = true);
@@ -78,6 +88,7 @@ cluster* processPreCluster(int rofID, o2::mid::PreCluster pc, o2::mid::Mapping* 
 std::vector<clusterPosHist*> processClustersPosition(std::vector<cluster*> midClusters);
 void processClustersSize(std::vector<cluster*> midClusters);
 void processClusterPosHist(std::vector<clusterPosHist*> clusterPosHistograms, bool isMC);
+void processFitParams(std::vector<fitParams*> fittedParams, const std::vector<double>& currentBParams, const std::array<double, 2>& currentAParams, const std::array<double, 2>& currentCParams);
 void fillStripPositions(clusterPosHist* hist, int nStrips, int pitch);
 DPMAP* accessHVObjectCCDB(int runNumber);
 float accessHVperDE(DPMAP* HV_map, int deId);
@@ -196,15 +207,20 @@ void processClusterPosHist(std::vector<clusterPosHist*> clusterPosHistograms, bo
 
     const char* legendLabel = isMC ? "O2 Sim" : "Data (Run 3)";
 
-    // Open output file to copy/paste fitted parameters in O2
-    std::ofstream fitParamsFile("fitted_parameters.txt");
-    fitParamsFile << "params.setParAll(cathode,deId,b,a0,a1,c0,c1)\n";
-
-    // Map to store cumulative fitted parameters for each deId/cathode
-    std::map<std::pair<int, int>, std::vector<std::array<double, 5>>> fitParamsMap;
+    // store cumulative fitted parameters for each deId/cathode/pitch
+    std::vector<fitParams*> fittedParams;
 
     // create current O2 PDF and parameters for comparison and fitting
     o2::mid::ChamberResponseParams chamberRespParam = o2::mid::createDefaultChamberResponseParams();
+
+    // Arrays to store original parameter values
+    std::vector<double> currentBParams;
+    std::array<double, 2> currentAParams; // a0, a1
+    currentAParams[0] = chamberRespParam.getParametersA()[0];
+    currentAParams[1] = chamberRespParam.getParametersA()[1] * 1000.; // defined as [1/V] in ChamberResponseParams, but needs to be multiplied by 1000 for the PDF (HV in kV)
+    std::array<double, 2> currentCParams; // c0, c1
+    currentCParams[0] = chamberRespParam.getParametersC()[0];
+    currentCParams[1] = chamberRespParam.getParametersC()[1] * 1000.;
     
     for (auto clusterHist : clusterPosHistograms) {
         if (clusterHist->nClusters == 0) continue; // skip empty histograms
@@ -218,47 +234,55 @@ void processClusterPosHist(std::vector<clusterPosHist*> clusterPosHistograms, bo
         double xMin = clusterHist->clusterPosition->GetXaxis()->GetXmin();
         double xMax = clusterHist->clusterPosition->GetXaxis()->GetXmax();
 
-        // define current PDF for comparison
+        // original parameters for comparison
         auto currenBparam = chamberRespParam.getParB(clusterHist->cathode, clusterHist->deId);
-        std::pair<double, double> currentAparam(-52.70, 6.089); // a0, a1
-        std::pair<double, double> currentCparam(-0.5e-3, 8.3e-4); // c0, c1
+        currentBParams.push_back(currenBparam);
+
+        // define current PDF for comparison
         auto clusterPDF_current = new TF1(Form("clusterPDF_current_de%i_cathode%i_pitch%i", clusterHist->deId, clusterHist->cathode, clusterHist->pitch), pdfFunc, 0, xMax, 7);
         clusterPDF_current->SetParNames("b", "a0", "a1", "c0", "c1", "hv", "theta");
-        clusterPDF_current->SetParameters(currenBparam, currentAparam.first, currentAparam.second, currentCparam.first, currentCparam.second, HV_value, 0.0); // current parameters
+        clusterPDF_current->SetParameters(currenBparam, currentAParams[0], currentAParams[1], currentCParams[0], currentCParams[1], HV_value, 0.0); // current parameters
         for (int i = 0; i < 7; ++i) clusterPDF_current->FixParameter(i, clusterPDF_current->GetParameter(i)); // fix all parameters (for comparison only)
 
         // define my own function for fitting
         auto clusterPDF_fit = new TF1(Form("clusterPDF_fit_de%i_cathode%i_pitch%i", clusterHist->deId, clusterHist->cathode, clusterHist->pitch), pdfFunc, 0, xMax, 7);
         clusterPDF_fit->SetParNames("b", "a0", "a1", "c0", "c1", "hv", "theta");
-        clusterPDF_fit->SetParameters(currenBparam, currentAparam.first, currentAparam.second, currentCparam.first, currentCparam.second, HV_value, 0.0); // initial parameters
+        clusterPDF_fit->SetParameters(currenBparam, currentAParams[0], currentAParams[1], currentCParams[0], currentCParams[1], HV_value, 0.0); // initial parameters
 
-        // Set parameter limits for fitting
-        double percentageChangeB = 0.8; // 'b' parameter needs less constraining
-        double percentageChangeAC = 0.5; // 'a' and 'c' parameters need more constraining
+        // Set parameter limits for fitting (a,c limits were determined by previous fits)
+        double percentageChangeB = 0.9; // 'b' parameter needs less constraining
         clusterPDF_fit->SetParLimits(0, currenBparam * (1.0 - percentageChangeB), currenBparam * (1.0 + percentageChangeB)); // b
-        clusterPDF_fit->SetParLimits(1, currentAparam.first * (1.0 + percentageChangeAC), currentAparam.first * (1.0 - percentageChangeAC)); // a0 (negative)
-        clusterPDF_fit->SetParLimits(2, currentAparam.second * (1.0 - percentageChangeAC), currentAparam.second * (1.0 + percentageChangeAC)); // a1
-        clusterPDF_fit->SetParLimits(3, currentCparam.first * (1.0 + percentageChangeAC), currentCparam.first * (1.0 - percentageChangeAC)); // c0 (negative)
-        clusterPDF_fit->SetParLimits(4, currentCparam.second * (1.0 - percentageChangeAC), currentCparam.second * (1.0 + percentageChangeAC)); // c1
+        //clusterPDF_fit->SetParLimits(1, -60.0, -15.0); // a0 (negative)
+        clusterPDF_fit->FixParameter(1, currentAParams[0]);
+        //clusterPDF_fit->SetParLimits(2, 6.0, 15.0); // a1
+        clusterPDF_fit->FixParameter(2, currentAParams[1]);
+        //clusterPDF_fit->SetParLimits(3, -0.015, 0.005); // c0 (negative)
+        clusterPDF_fit->FixParameter(3, -0.0045); // c0 (negative)
+        //clusterPDF_fit->SetParLimits(4, -0.0015, 0.0015); // c1
+        clusterPDF_fit->FixParameter(4, 0.0005); // c1
         clusterPDF_fit->FixParameter(5, HV_value); // fix HV parameter
         clusterPDF_fit->FixParameter(6, 0.0); // fix theta parameter
 
         // fit the histogram with the PDF
         double fitMin = clusterHist->clusterPosition->GetBinLowEdge(1); // Lower edge of the first bin
         int lastNonEmptyBin = clusterHist->clusterPosition->FindLastBinAbove(0); // Find the last non-empty bin
+        if (lastNonEmptyBin > 4) {lastNonEmptyBin = 4;} // limit the fit range to the first 4 bins
         double fitMax = clusterHist->clusterPosition->GetBinLowEdge(lastNonEmptyBin + 1); // Upper edge of the last non-empty bin
         clusterHist->clusterPosition->Fit(Form("clusterPDF_fit_de%i_cathode%i_pitch%i", clusterHist->deId, clusterHist->cathode, clusterHist->pitch), "R", "", fitMin, fitMax);
 
-        // Store the fitted parameters for this deId/cathode
-        auto key = std::make_pair(clusterHist->deId, clusterHist->cathode);
-        std::array<double, 5> params = {
-            clusterPDF_fit->GetParameter(0), // b
-            clusterPDF_fit->GetParameter(1), // a0
-            clusterPDF_fit->GetParameter(2), // a1
-            clusterPDF_fit->GetParameter(3), // c0
-            clusterPDF_fit->GetParameter(4)  // c1
-        };
-        fitParamsMap[key].push_back(params);
+        // add parameters for later analysis (only add when it has 4 or more bins with entries to ensure fit reliability)
+        fitParams* params = new fitParams();
+        params->deId = clusterHist->deId;
+        params->cathode = clusterHist->cathode;
+        params->pitch = clusterHist->pitch;
+        params->nBins = clusterHist->clusterPosition->FindLastBinAbove(0);
+        params->nEntries = clusterHist->clusterPosition->GetEntries();
+        params->params[0] = clusterPDF_fit->GetParameter(0); // b
+        params->params[1] = clusterPDF_fit->GetParameter(1); // a0
+        params->params[2] = clusterPDF_fit->GetParameter(2); // a1
+        params->params[3] = clusterPDF_fit->GetParameter(3); // c0
+        params->params[4] = clusterPDF_fit->GetParameter(4); // c1
+        fittedParams.push_back(params);
 
         // plot first hist, current PDF, and fitted function together
         TCanvas* canvasCheckFirst = new TCanvas(Form("strip_position_de%i_cathode%i_pitch%i", clusterHist->deId, clusterHist->cathode, clusterHist->pitch), "Fired Probability vs Distance", 800, 600);
@@ -299,30 +323,118 @@ void processClusterPosHist(std::vector<clusterPosHist*> clusterPosHistograms, bo
         canvasCheckFirst->Write();
     }
 
-    // Calculate average fitted parameters for each deId/cathode and write to the text file
-    for (const auto& [key, paramsList] : fitParamsMap) {
-        int deId = key.first;
-        int cathode = key.second;
+    delete outFile;
 
-        std::array<double, 5> avgParams = {0.0, 0.0, 0.0, 0.0, 0.0};
-        for (const auto& params : paramsList) {
-            for (size_t i = 0; i < avgParams.size(); ++i) {
-                avgParams[i] += params[i];
-            }
-        }
-        for (size_t i = 0; i < avgParams.size(); ++i) {
-            avgParams[i] /= paramsList.size();
-        }
+    processFitParams(fittedParams, currentBParams, currentAParams, currentCParams);
+}
 
-        fitParamsFile << "params.setParAll(" << cathode << "," << deId
-                        << "," << roundf(avgParams[0] * 100) / 100 // b
-                        << "," << roundf(avgParams[1] * 100) / 100 << "," << roundf(avgParams[2] * 1000) / 1000 // a0, a1
-                        << "," << roundf(avgParams[3] * 10e6) / 10e6 << "," << roundf(avgParams[4] * 10e6) / 10e6 // c0, c1
-                        << ");\n";
+void processFitParams(std::vector<fitParams*> fittedParams, const std::vector<double>& currentBParams, const std::array<double, 2>& currentAParams, const std::array<double, 2>& currentCParams) {
+    // Check if there are any fitted parameters to process 
+    if (fittedParams.empty()) {
+        std::cout << "No fitted parameters to process." << std::endl;
+        return;
     }
 
-    // Close the output file
-    fitParamsFile.close();
+    // Histograms for each parameter
+    std::map<std::string, TH1D*> histograms;
+    histograms["b"] = new TH1D("b_distribution", "Distribution of b-parameter; b; Count", 40, 1.0, 4.0);
+    histograms["b_original"] = new TH1D("b_original_distribution", "Original Distribution of parameter b; b; Count", 40, 1.0, 4.0);
+    histograms["a0"] = new TH1D("a0_distribution", "Distribution of fitted a0-parameters; a0; Count", 40, -80.0, 120.0);
+    histograms["a1"] = new TH1D("a1_distribution", "Distribution of fitted a1-parameters; a1; Count", 40, 0.0, 50.0);
+    histograms["c0"] = new TH1D("c0_distribution", "Distribution of fitted c0-parameters; c0; Count", 40, -0.015, 0.005);
+    histograms["c1"] = new TH1D("c1_distribution", "Distribution of fitted c1-parameters; c1; Count", 40, -0.0015, 0.0015);
+
+    // Fill original b parameter histogram
+    for (const auto& b : currentBParams) {
+        histograms["b_original"]->Fill(b);
+    }
+
+    // Filter fitParams to select only one object per deId/cathode
+    std::map<std::pair<int, int>, fitParams*> filteredParams; // Key: {deId, cathode}
+
+    for (const auto& params : fittedParams) {
+        auto key = std::make_pair(params->deId, params->cathode);
+
+        // Check if the key already exists in the map
+        if (filteredParams.find(key) == filteredParams.end()) {
+            // If not, add the current params
+            filteredParams[key] = params;
+        } else {
+            // If it exists, compare nBins and nEntries
+            auto existingParams = filteredParams[key];
+            if (params->nBins > existingParams->nBins || 
+                (params->nBins == existingParams->nBins && params->nEntries > existingParams->nEntries)) {
+                filteredParams[key] = params; // Replace with the current params
+            }
+        }
+    }
+
+    // Fill fitted parameter histograms using the filtered parameters
+    for (const auto& [key, params] : filteredParams) {
+        histograms["b"]->Fill(params->params[0]); // b
+        histograms["a0"]->Fill(params->params[1]); // a0
+        histograms["a1"]->Fill(params->params[2]); // a1
+        histograms["c0"]->Fill(params->params[3]); // c0
+        histograms["c1"]->Fill(params->params[4]); // c1
+    }
+
+    // Create a ROOT file to store histograms
+    auto outFile = new TFile("fit_parameters_distributions.root", "RECREATE");
+
+    // Plot b parameter distributions on the same canvas
+    TCanvas* canvasB = new TCanvas("b_distributions_compare", "Distributions of original and fitted b-parameters", 800, 600);
+    histograms["b_original"]->SetLineColor(kRed);
+    histograms["b_original"]->SetStats(0);
+    histograms["b_original"]->Draw();
+    histograms["b"]->SetLineColor(kBlue);
+    histograms["b"]->SetStats(0);
+    histograms["b"]->Draw("SAME");
+
+    // Add a legend to distinguish between the two distributions
+    TLegend* legendB = new TLegend(0.6, 0.7, 0.9, 0.9);
+    legendB->AddEntry(histograms["b_original"], "Original b-parameters", "l");
+    legendB->AddEntry(histograms["b"], "Fitted b-parameters", "l");
+    legendB->Draw("SAME");
+
+    canvasB->Write();
+
+    // Create a canvas for each histogram and draw the line on the same canvas
+    for (auto& [name, hist] : histograms) {
+        if (name == "b" || name == "b_original") {
+            continue; // Skip b-parameter histograms
+        }
+
+        TCanvas* canvas = new TCanvas(Form("%s_distribution", name.c_str()), Form("Distribution of fitted %s-parameters", name.c_str()), 800, 600);
+        hist->SetStats(0);
+        hist->Draw();
+
+        TLine* line = nullptr;
+        if (name == "a0") {
+            line = new TLine(currentAParams[0], 0, currentAParams[0], hist->GetMaximum());
+        } else if (name == "a1") {
+            line = new TLine(currentAParams[1], 0, currentAParams[1], hist->GetMaximum());
+        } else if (name == "c0") {
+            line = new TLine(currentCParams[0], 0, currentCParams[0], hist->GetMaximum());
+        } else if (name == "c1") {
+            line = new TLine(currentCParams[1], 0, currentCParams[1], hist->GetMaximum());
+        }
+
+        if (line) {
+            line->SetLineColor(kRed);
+            line->SetLineStyle(2);
+            line->Draw("SAME");
+        }
+
+        // Add a legend to distinguish between the histogram and the original parameter line
+        TLegend* legend = new TLegend(0.6, 0.7, 0.9, 0.9);
+        legend->AddEntry(hist, "Fitted Parameters", "l");
+        if (line) {
+            legend->AddEntry(line, "Original Parameter", "l");
+        }
+        legend->Draw("SAME");
+
+        canvas->Write(); // Save the canvas to the ROOT file
+    }
 
     delete outFile;
 }
