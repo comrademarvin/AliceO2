@@ -369,6 +369,10 @@ void processFitParams(std::vector<fitParams*> fittedParams, const std::vector<do
         }
     }
 
+    // output textfile with fit parameters for each deId/cathode
+    std::ofstream outFileTxt("fitted_parameters.txt");
+    outFileTxt << "deId\tcathode\tpitch\tnBins\tnEntries\tb\ta0\ta1\tc0\tc1\n"; // header
+
     // Fill fitted parameter histograms using the filtered parameters
     for (const auto& [key, params] : filteredParams) {
         histograms["b"]->Fill(params->params[0]); // b
@@ -376,6 +380,11 @@ void processFitParams(std::vector<fitParams*> fittedParams, const std::vector<do
         histograms["a1"]->Fill(params->params[2]); // a1
         histograms["c0"]->Fill(params->params[3]); // c0
         histograms["c1"]->Fill(params->params[4]); // c1
+
+        // Write parameters to text file
+        outFileTxt << params->deId << "\t" << params->cathode << "\t" << params->pitch << "\t"
+                << params->nBins << "\t" << params->nEntries << "\t"
+                << params->params[0] << "\t" << params->params[1] << "\t" << params->params[2] << "\t" << params->params[3] << "\t" << params->params[4] << "\n";
     }
 
     // Create a ROOT file to store histograms
