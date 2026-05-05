@@ -9,8 +9,12 @@
 // granted to it by virtue of its status as an Intergovernmental Organization
 // or submit itself to any jurisdiction.
 
+///
 /// \file ClustererACTS.cxx
 /// \brief Implementation of the TRK cluster finder with the ACTS
+/// \author Nicolò Jacazio, Università del Piemonte Orientale (IT)
+/// \since 2026-03-01
+///
 
 #include "TRKReconstruction/ClustererACTS.h"
 #include "TRKBase/GeometryTGeo.h"
@@ -158,9 +162,7 @@ void ClustererACTS::process(gsl::span<const Digit> digits,
                             std::vector<unsigned char>& patterns,
                             std::vector<o2::trk::ROFRecord>& clusterROFs,
                             const ConstDigitTruth* digitLabels,
-                            ClusterTruth* clusterLabels,
-                            gsl::span<const DigMC2ROFRecord> digMC2ROFs,
-                            std::vector<o2::trk::MC2ROFRecord>* clusterMC2ROFs)
+                            ClusterTruth* clusterLabels)
 {
   if (!mThread) {
     mThread = std::make_unique<ClustererThread>(this);
