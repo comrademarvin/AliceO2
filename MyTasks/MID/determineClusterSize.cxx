@@ -103,8 +103,9 @@ int main(int argc, char* argv[]) {
     bool isMC = std::stoi(argv[1]) != 0;
 
     // run on multiple batches of data and combine the results for cluster size and position analysis
-    const int numBatches = 2;
-    std::string recoFilesDirectory[numBatches] = {"/home/stephan/MID_cluster/run_558801_batch_1", "/home/stephan/MID_cluster/run_558801_batch_2"};
+    const int numBatches = 1;
+    //std::string recoFilesDirectory[numBatches] = {"/home/stephan/MID_cluster/run_558801_batch_1", "/home/stephan/MID_cluster/run_558801_batch_2"};
+    std::string recoFilesDirectory[numBatches] = {"/home/stephan/sims/mu_boxgen_fitted_100k"};
 
     std::vector<cluster*> combinedClusters;
 
@@ -251,22 +252,22 @@ void processClusterPosHist(std::vector<clusterPosHist*> clusterPosHistograms, bo
 
         // Set parameter limits for fitting (a,c limits were determined by previous fits)
         double percentageChangeB = 0.9; // 'b' parameter needs less constraining
-        clusterPDF_fit->SetParLimits(0, currenBparam * (1.0 - percentageChangeB), currenBparam * (1.0 + percentageChangeB)); // b
+        //clusterPDF_fit->SetParLimits(0, currenBparam * (1.0 - percentageChangeB), currenBparam * (1.0 + percentageChangeB)); // b
         //clusterPDF_fit->SetParLimits(1, -60.0, -15.0); // a0 (negative)
-        clusterPDF_fit->FixParameter(1, currentAParams[0]);
+        clusterPDF_fit->FixParameter(1, currentAParams[0]); // a0 (negative)
         //clusterPDF_fit->SetParLimits(2, 6.0, 15.0); // a1
-        clusterPDF_fit->FixParameter(2, currentAParams[1]);
+        clusterPDF_fit->FixParameter(2, currentAParams[1]); //a1
         //clusterPDF_fit->SetParLimits(3, -0.015, 0.005); // c0 (negative)
-        clusterPDF_fit->FixParameter(3, -0.0045); // c0 (negative)
+        clusterPDF_fit->FixParameter(3, -0.00475); // c0 (negative)
         //clusterPDF_fit->SetParLimits(4, -0.0015, 0.0015); // c1
-        clusterPDF_fit->FixParameter(4, 0.0005); // c1
+        clusterPDF_fit->FixParameter(4, 0.0004); // c1
         clusterPDF_fit->FixParameter(5, HV_value); // fix HV parameter
         clusterPDF_fit->FixParameter(6, 0.0); // fix theta parameter
 
         // fit the histogram with the PDF
         double fitMin = clusterHist->clusterPosition->GetBinLowEdge(1); // Lower edge of the first bin
         int lastNonEmptyBin = clusterHist->clusterPosition->FindLastBinAbove(0); // Find the last non-empty bin
-        if (lastNonEmptyBin > 4) {lastNonEmptyBin = 4;} // limit the fit range to the first 4 bins
+        if (lastNonEmptyBin > 8) {lastNonEmptyBin = 8;} // limit the fit range to the first n bins
         double fitMax = clusterHist->clusterPosition->GetBinLowEdge(lastNonEmptyBin + 1); // Upper edge of the last non-empty bin
         clusterHist->clusterPosition->Fit(Form("clusterPDF_fit_de%i_cathode%i_pitch%i", clusterHist->deId, clusterHist->cathode, clusterHist->pitch), "R", "", fitMin, fitMax);
 
@@ -370,8 +371,8 @@ void processFitParams(std::vector<fitParams*> fittedParams, const std::vector<do
     }
 
     // output textfile with fit parameters for each deId/cathode
-    std::ofstream outFileTxt("fitted_parameters.txt");
-    outFileTxt << "deId\tcathode\tpitch\tnBins\tnEntries\tb\ta0\ta1\tc0\tc1\n"; // header
+    std::ofstream outFileTxt("fitted_parameters_O2.txt");
+    outFileTxt << "params.setParB(cathode, deId, b);"; // header
 
     // Fill fitted parameter histograms using the filtered parameters
     for (const auto& [key, params] : filteredParams) {
@@ -381,10 +382,8 @@ void processFitParams(std::vector<fitParams*> fittedParams, const std::vector<do
         histograms["c0"]->Fill(params->params[3]); // c0
         histograms["c1"]->Fill(params->params[4]); // c1
 
-        // Write parameters to text file
-        outFileTxt << params->deId << "\t" << params->cathode << "\t" << params->pitch << "\t"
-                << params->nBins << "\t" << params->nEntries << "\t"
-                << params->params[0] << "\t" << params->params[1] << "\t" << params->params[2] << "\t" << params->params[3] << "\t" << params->params[4] << "\n";
+        // Write b-parameter to text file for O2
+        outFileTxt << "params.setParB(" << params->cathode << ", " << params->deId << ", " << std::fixed << std::setprecision(2) << params->params[0] << ");" << std::endl;
     }
 
     // Create a ROOT file to store histograms
