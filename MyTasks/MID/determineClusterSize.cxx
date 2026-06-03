@@ -105,7 +105,7 @@ int main(int argc, char* argv[]) {
     // run on multiple batches of data and combine the results for cluster size and position analysis
     const int numBatches = 1;
     //std::string recoFilesDirectory[numBatches] = {"/home/stephan/MID_cluster/run_558801_batch_1", "/home/stephan/MID_cluster/run_558801_batch_2"};
-    std::string recoFilesDirectory[numBatches] = {"/home/stephan/sims/mu_boxgen_fitted_100k"};
+    std::string recoFilesDirectory[numBatches] = {"/home/stephan/sims/mu_boxgen_fitted_v4_100k"};
 
     std::vector<cluster*> combinedClusters;
 
@@ -252,15 +252,15 @@ void processClusterPosHist(std::vector<clusterPosHist*> clusterPosHistograms, bo
 
         // Set parameter limits for fitting (a,c limits were determined by previous fits)
         double percentageChangeB = 0.9; // 'b' parameter needs less constraining
-        //clusterPDF_fit->SetParLimits(0, currenBparam * (1.0 - percentageChangeB), currenBparam * (1.0 + percentageChangeB)); // b
-        //clusterPDF_fit->SetParLimits(1, -60.0, -15.0); // a0 (negative)
-        clusterPDF_fit->FixParameter(1, currentAParams[0]); // a0 (negative)
+        clusterPDF_fit->SetParLimits(0, currenBparam * (1.0 - percentageChangeB), currenBparam * (1.0 + percentageChangeB)); // b
+        //clusterPDF_fit->SetParLimits(1, -80.0, 160.0); // a0 (negative)
+        clusterPDF_fit->FixParameter(1, -20.0); // a0 (negative)
         //clusterPDF_fit->SetParLimits(2, 6.0, 15.0); // a1
         clusterPDF_fit->FixParameter(2, currentAParams[1]); //a1
         //clusterPDF_fit->SetParLimits(3, -0.015, 0.005); // c0 (negative)
-        clusterPDF_fit->FixParameter(3, -0.00475); // c0 (negative)
+        clusterPDF_fit->FixParameter(3, -0.0042); // c0 (negative)
         //clusterPDF_fit->SetParLimits(4, -0.0015, 0.0015); // c1
-        clusterPDF_fit->FixParameter(4, 0.0004); // c1
+        clusterPDF_fit->FixParameter(4, 0.00046); // c1
         clusterPDF_fit->FixParameter(5, HV_value); // fix HV parameter
         clusterPDF_fit->FixParameter(6, 0.0); // fix theta parameter
 
@@ -269,7 +269,7 @@ void processClusterPosHist(std::vector<clusterPosHist*> clusterPosHistograms, bo
         int lastNonEmptyBin = clusterHist->clusterPosition->FindLastBinAbove(0); // Find the last non-empty bin
         if (lastNonEmptyBin > 8) {lastNonEmptyBin = 8;} // limit the fit range to the first n bins
         double fitMax = clusterHist->clusterPosition->GetBinLowEdge(lastNonEmptyBin + 1); // Upper edge of the last non-empty bin
-        clusterHist->clusterPosition->Fit(Form("clusterPDF_fit_de%i_cathode%i_pitch%i", clusterHist->deId, clusterHist->cathode, clusterHist->pitch), "R", "", fitMin, fitMax);
+        clusterHist->clusterPosition->Fit(Form("clusterPDF_fit_de%i_cathode%i_pitch%i", clusterHist->deId, clusterHist->cathode, clusterHist->pitch), "WLR", "", fitMin, fitMax);
 
         // add parameters for later analysis (only add when it has 4 or more bins with entries to ensure fit reliability)
         fitParams* params = new fitParams();
@@ -279,7 +279,14 @@ void processClusterPosHist(std::vector<clusterPosHist*> clusterPosHistograms, bo
         params->nBins = clusterHist->clusterPosition->FindLastBinAbove(0);
         params->nEntries = clusterHist->clusterPosition->GetEntries();
         params->params[0] = clusterPDF_fit->GetParameter(0); // b
-        params->params[1] = clusterPDF_fit->GetParameter(1); // a0
+        if (clusterPDF_fit->GetParError(1)/std::abs(clusterPDF_fit->GetParameter(1)) < 0.2) { // only consider a0 parameter if the fit error is less than 20% of the parameter value to ensure fit reliability
+            params->params[1] = clusterPDF_fit->GetParameter(1); // a0
+            // std::cout << "==== Fit a0 info: " << "a0 = " << params->params[1] << " (error: " << clusterPDF_fit->GetParError(1) << ")"
+            //             << ", deID = " << params->deId << ", cathode = " << params->cathode << ", pitch = " << params->pitch
+            //             << ", entries = " << params->nEntries << ", bins = " << params->nBins << std::endl;
+        } else {
+            params->params[1] = currentAParams[0]; // if the fit error is too large, use the original parameter
+        }
         params->params[2] = clusterPDF_fit->GetParameter(2); // a1
         params->params[3] = clusterPDF_fit->GetParameter(3); // c0
         params->params[4] = clusterPDF_fit->GetParameter(4); // c1
@@ -340,10 +347,10 @@ void processFitParams(std::vector<fitParams*> fittedParams, const std::vector<do
     std::map<std::string, TH1D*> histograms;
     histograms["b"] = new TH1D("b_distribution", "Distribution of b-parameter; b; Count", 40, 1.0, 4.0);
     histograms["b_original"] = new TH1D("b_original_distribution", "Original Distribution of parameter b; b; Count", 40, 1.0, 4.0);
-    histograms["a0"] = new TH1D("a0_distribution", "Distribution of fitted a0-parameters; a0; Count", 40, -80.0, 120.0);
+    histograms["a0"] = new TH1D("a0_distribution", "Distribution of fitted a0-parameters; a0; Count", 80, -80.0, 160.0);
     histograms["a1"] = new TH1D("a1_distribution", "Distribution of fitted a1-parameters; a1; Count", 40, 0.0, 50.0);
-    histograms["c0"] = new TH1D("c0_distribution", "Distribution of fitted c0-parameters; c0; Count", 40, -0.015, 0.005);
-    histograms["c1"] = new TH1D("c1_distribution", "Distribution of fitted c1-parameters; c1; Count", 40, -0.0015, 0.0015);
+    histograms["c0"] = new TH1D("c0_distribution", "Distribution of fitted c0-parameters; c0; Count", 200, -0.015, 0.005);
+    histograms["c1"] = new TH1D("c1_distribution", "Distribution of fitted c1-parameters; c1; Count", 300, -0.0015, 0.0015);
 
     // Fill original b parameter histogram
     for (const auto& b : currentBParams) {
@@ -395,7 +402,7 @@ void processFitParams(std::vector<fitParams*> fittedParams, const std::vector<do
     histograms["b_original"]->SetStats(0);
     histograms["b_original"]->Draw();
     histograms["b"]->SetLineColor(kBlue);
-    histograms["b"]->SetStats(0);
+    //histograms["b"]->SetStats(0);
     histograms["b"]->Draw("SAME");
 
     // Add a legend to distinguish between the two distributions
