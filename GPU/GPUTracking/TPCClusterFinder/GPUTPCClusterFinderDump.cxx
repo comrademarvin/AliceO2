@@ -15,7 +15,6 @@
 #include "GPUTPCClusterFinder.h"
 #include "GPUReconstruction.h"
 #include "CfArray2D.h"
-#include "DataFormatsTPC/Digit.h"
 #include "DataFormatsTPC/ClusterNative.h"
 #include "GPUSettings.h"
 
@@ -155,7 +154,7 @@ void GPUTPCClusterFinder::DumpSuppressedPeaksCompacted(std::ostream& out)
 
 void GPUTPCClusterFinder::DumpClusters(std::ostream& out)
 {
-  out << "\nClusterer - Clusters - Sector " << mISector << " - Fragment " << mPmemory->fragment.index << "\n";
+  out << "\nClusterer - Clusters - Sector " << mISector << " - All Fragments\n";
 
   for (uint32_t i = 0; i < GPUTPCGeometry::NROWS; i++) {
     size_t N = mPclusterInRow[i];
@@ -167,7 +166,13 @@ void GPUTPCClusterFinder::DumpClusters(std::ostream& out)
 
     out << "Row: " << i << ": " << N << "\n";
     for (const auto& cl : sortedCluster) {
-      out << std::hex << cl.timeFlagsPacked << std::dec << " " << cl.padPacked << " " << int32_t{cl.sigmaTimePacked} << " " << int32_t{cl.sigmaPadPacked} << " " << cl.qMax << " " << cl.qTot << "\n";
+      uint32_t qTot = cl.qTot;
+      uint32_t sigmaTime = cl.sigmaTimePacked;
+      if (cl.isSaturated()) {
+        qTot = cl.getSaturatedQtot();
+        sigmaTime = cl.getSaturatedTailLength();
+      }
+      out << std::hex << cl.timeFlagsPacked << std::dec << " " << cl.padPacked << " " << sigmaTime << " " << int32_t{cl.sigmaPadPacked} << " " << cl.qMax << " " << qTot << "\n";
     }
   }
 }

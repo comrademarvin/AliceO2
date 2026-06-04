@@ -25,7 +25,7 @@
 namespace o2::its::math_utils
 {
 
-GPUhdi() float computePhi(float x, float y)
+GPUhdi() constexpr float computePhi(float x, float y)
 {
   return o2::math_utils::fastATan2(-y, -x) + o2::constants::math::PI;
 }

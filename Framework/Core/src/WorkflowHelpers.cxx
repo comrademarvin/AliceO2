@@ -282,8 +282,12 @@ void WorkflowHelpers::injectServiceDevices(WorkflowSpec& workflow, ConfigContext
       bool hasProjectors = false;
       bool hasIndexRecords = false;
       bool hasCCDBURLs = false;
+      bool wasAOD = false;
       // all three options are exclusive
       for (auto const& p : input.metadata) {
+        if (p.name.starts_with("aod-origin-replaced")) {
+          wasAOD = true;
+        }
         if (p.name.compare("projectors") == 0) {
           hasProjectors = true;
           break;
@@ -342,7 +346,7 @@ void WorkflowHelpers::injectServiceDevices(WorkflowSpec& workflow, ConfigContext
         DataSpecUtils::updateInputList(dec.requestedIDXs, InputSpec{input});
       } else if (hasCCDBURLs) {
         DataSpecUtils::updateInputList(dec.requestedTIMs, InputSpec{input});
-      } else if (DataSpecUtils::partialMatch(input, AODOrigins)) {
+      } else if (DataSpecUtils::partialMatch(input, AODOrigins) || wasAOD) {
         DataSpecUtils::updateInputList(dec.requestedAODs, InputSpec{input});
       }
     }
@@ -353,8 +357,12 @@ void WorkflowHelpers::injectServiceDevices(WorkflowSpec& workflow, ConfigContext
       bool hasProjectors = false;
       bool hasIndexRecords = false;
       bool hasCCDBURLs = false;
+      bool wasAOD = false;
       // all three options are exclusive
       for (auto const& p : output.metadata) {
+        if (p.name.starts_with("aod-origin-replaced")) {
+          wasAOD = true;
+        }
         if (p.name.compare("projectors") == 0) {
           hasProjectors = true;
           break;
@@ -374,7 +382,7 @@ void WorkflowHelpers::injectServiceDevices(WorkflowSpec& workflow, ConfigContext
         dec.providedTIMs.emplace_back(output);
       } else if (hasIndexRecords) {
         dec.providedIDXs.emplace_back(output);
-      } else if (DataSpecUtils::partialMatch(output, AODOrigins)) {
+      } else if (DataSpecUtils::partialMatch(output, AODOrigins) || wasAOD) {
         dec.providedAODs.emplace_back(output);
       } else if (DataSpecUtils::partialMatch(output, header::DataOrigin{"ATSK"})) {
         dec.providedOutputObjHist.emplace_back(output);
@@ -627,12 +635,15 @@ void WorkflowHelpers::injectServiceDevices(WorkflowSpec& workflow, ConfigContext
     // Use the new dummy sink when the AOD reader is there
     O2_SIGNPOST_ID_GENERATE(sid, workflow_helpers);
     if (tfnsource != workflow.end()) {
-      O2_SIGNPOST_EVENT_EMIT(workflow_helpers, sid, "injectServiceDevices", "Injecting scheduled dummy sink");
-      // if there is a tfnsource, make sure the sink gets TFN/TFF
       DataSpecUtils::updateInputList(ignored, InputSpec{"tfn", "TFN", "TFNumber", 0, Lifetime::Sporadic});
       DataSpecUtils::updateInputList(ignored, InputSpec{"tff", "TFF", "TFFilename", 0, Lifetime::Sporadic});
+    }
+
+    if (tfnsource != workflow.end() && !tfnsource->name.starts_with("aod-producer-workflow")) { // any tfnsource except the aod-producer should use scheduled sink
+      O2_SIGNPOST_EVENT_EMIT(workflow_helpers, sid, "injectServiceDevices", "Injecting scheduled dummy sink");
+      // if there is a tfnsource, make sure the sink gets TFN/TFF
       extraSpecs.push_back(CommonDataProcessors::getScheduledDummySink(ignored));
-    } else {
+    } else { // if there is no tfn source or if that source is aod-producer-workflow, out-of-band channel is used to propagate the number of consumed timeframes
       O2_SIGNPOST_EVENT_EMIT(workflow_helpers, sid, "injectServiceDevices", "Injecting rate limited dummy sink");
       std::string rateLimitingChannelConfigOutput;
       if (rateLimitingIPCID != -1) {

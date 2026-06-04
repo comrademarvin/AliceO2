@@ -40,8 +40,7 @@ RawPixelDecoder<Mapping>::RawPixelDecoder()
   mTimerDecode.Stop();
   mTimerFetchData.Stop();
   mSelfName = o2::utils::Str::concat_string(Mapping::getName(), "Decoder");
-  DPLRawParser<>::setCheckIncompleteHBF(false);                                                                             // Disable incomplete HBF checking, see ErrPacketCounterJump check in GBTLink.cxx
-  mInputFilter = {InputSpec{"filter", ConcreteDataTypeMatcher{Mapping::getOrigin(), o2::header::gDataDescriptionRawData}}}; // by default take all raw data
+  DPLRawParser<>::setCheckIncompleteHBF(false); // Disable incomplete HBF checking, see ErrPacketCounterJump check in GBTLink.cxx
 }
 
 ///______________________________________________________________
@@ -235,13 +234,9 @@ void RawPixelDecoder<Mapping>::setupLinks(InputRecord& inputs)
   auto nLinks = mGBTLinks.size();
   auto origin = (mUserDataOrigin == o2::header::gDataOriginInvalid) ? mMAP.getOrigin() : mUserDataOrigin;
   auto datadesc = (mUserDataDescription == o2::header::gDataDescriptionInvalid) ? o2::header::gDataDescriptionRawData : mUserDataDescription;
-  if (mUserDataDescription != o2::header::gDataDescriptionInvalid) { // overwrite data filter origin&descriptions with user defined ones if possible
-    for (auto& filt : mInputFilter) {
-      if (std::holds_alternative<o2::framework::ConcreteDataMatcher>(filt.matcher)) {
-        std::get<o2::framework::ConcreteDataMatcher>(filt.matcher).origin = origin;
-        std::get<o2::framework::ConcreteDataMatcher>(filt.matcher).description = datadesc;
-      }
-    }
+
+  if (mInputFilter.empty()) { // if no filter set externally, create a global one from imposed or default origin / description
+    mInputFilter.emplace_back("filter", ConcreteDataTypeMatcher{origin, datadesc});
   }
 
   // if we see requested data type input with 0xDEADBEEF subspec and 0 payload this means that the "delayed message"

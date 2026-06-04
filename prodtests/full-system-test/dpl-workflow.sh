@@ -72,6 +72,50 @@ elif [[ -z ${SYNCRAWMODE:-} ]]; then
 fi
 
 # ---------------------------------------------------------------------------------------------------------------------
+# build incoming raw inputs specs
+define_raw_inputs()
+{
+  PROXY_INSPEC="dd:FLP/DISTSUBTIMEFRAME/0"
+  PROXY_IN_N=0
+  for i in ${INPUT_DETECTOR_LIST//,/ }; do
+    if has_detector_flp_processing $i; then
+      case $i in
+        TOF)
+          PROXY_INTYPE="CRAWDATA";;
+        FT0 | FV0 | FDD)
+          PROXY_INTYPE="DIGITSBC/0 DIGITSCH/0";;
+        PHS)
+          PROXY_INTYPE="CELLS CELLTRIGREC";;
+        CPV)
+          PROXY_INTYPE="DIGITS/0 DIGITTRIGREC/0 RAWHWERRORS";;
+        EMC)
+          PROXY_INTYPE="CELLS/0 CELLSTRGR/0 DECODERERR";;
+        CTP)
+          PROXY_INTYPE="LUMI/0 RAWDATA"
+          CTP_CONFIG=" --no-lumi "
+          ;;
+        *)
+          echo Input type for detector $i with FLP processing not defined 1>&2
+          exit 1;;
+      esac
+    else
+      PROXY_INTYPE=RAWDATA
+    fi
+    for j in $PROXY_INTYPE; do
+      PROXY_INNAME="RAWIN$PROXY_IN_N"
+      let PROXY_IN_N=$PROXY_IN_N+1
+      PROXY_INSPEC+=";$PROXY_INNAME:$i/$j"
+    done
+  done
+  # do we have DPL_RAWTFDUMP_TRIGGER trigger (e.g. TPC/CMVTRIGGER)? If so, add its spec
+  if has_detector TPC && [[ -n ${DPL_RAWTFDUMP_TRIGGER:-} ]]; then
+    PROXY_INNAME="RAWIN$PROXY_IN_N"
+    let PROXY_IN_N=$PROXY_IN_N+1
+    PROXY_INSPEC+=";$PROXY_INNAME:${DPL_RAWTFDUMP_TRIGGER}"
+  fi
+}
+
+# ---------------------------------------------------------------------------------------------------------------------
 # Set some individual workflow arguments depending on configuration
 GPU_INPUT=zsraw
 GPU_OUTPUT=tracks,clusters
@@ -109,6 +153,7 @@ EVE_OPT=" --jsons-folder $EDJSONS_DIR"
 : ${ALPIDE_ERR_DUMPS:=}
 : ${ITSSTAGGERED:=}
 : ${MFTSTAGGERED:=}
+: ${PROXY_INSPEC:=}
 
 [[ -z $ALPIDE_ERR_DUMPS ]] && [[ $EPNSYNCMODE == 1 && $RUNTYPE == "PHYSICS" ]] && ALPIDE_ERR_DUMPS=1 || ALPIDE_ERR_DUMPS=0
 
@@ -483,38 +528,7 @@ if [[ -n $INPUT_DETECTOR_LIST ]]; then
     add_W o2-raw-tf-reader-workflow "--delay $TFDELAY $TFRAWOPT --loop $TFLOOP $NTIMEFRAMES_CMD --input-data ${TFName} ${INPUT_FILE_COPY_CMD+--copy-cmd} ${INPUT_FILE_COPY_CMD:-} --onlyDet $INPUT_DETECTOR_LIST ${TIMEFRAME_SHM_LIMIT+--timeframes-shm-limit} ${TIMEFRAME_SHM_LIMIT:-}"
   elif [[ $EXTINPUT == 1 ]]; then
     PROXY_CHANNEL="name=readout-proxy,type=pull,method=connect,address=ipc://${UDS_PREFIX}${INRAWCHANNAME},transport=shmem,rateLogging=$EPNSYNCMODE"
-    PROXY_INSPEC="dd:FLP/DISTSUBTIMEFRAME/0"
-    PROXY_IN_N=0
-    for i in ${INPUT_DETECTOR_LIST//,/ }; do
-      if has_detector_flp_processing $i; then
-        case $i in
-          TOF)
-            PROXY_INTYPE="CRAWDATA";;
-          FT0 | FV0 | FDD)
-            PROXY_INTYPE="DIGITSBC/0 DIGITSCH/0";;
-          PHS)
-            PROXY_INTYPE="CELLS CELLTRIGREC";;
-          CPV)
-            PROXY_INTYPE="DIGITS/0 DIGITTRIGREC/0 RAWHWERRORS";;
-          EMC)
-            PROXY_INTYPE="CELLS/0 CELLSTRGR/0 DECODERERR";;
-          CTP)
-            PROXY_INTYPE="LUMI/0 RAWDATA"
-            CTP_CONFIG=" --no-lumi "
-            ;;
-          *)
-            echo Input type for detector $i with FLP processing not defined 1>&2
-            exit 1;;
-        esac
-      else
-        PROXY_INTYPE=RAWDATA
-      fi
-      for j in $PROXY_INTYPE; do
-        PROXY_INNAME="RAWIN$PROXY_IN_N"
-        let PROXY_IN_N=$PROXY_IN_N+1
-        PROXY_INSPEC+=";$PROXY_INNAME:$i/$j"
-      done
-    done
+    define_raw_inputs
     [[ -n ${TIMEFRAME_RATE_LIMIT:-} ]] && [[ $TIMEFRAME_RATE_LIMIT != 0 ]] && PROXY_CHANNEL+=";name=metric-feedback,type=pull,method=connect,address=ipc://${UDS_PREFIX}metric-feedback-${O2JOBID:-$NUMAID},transport=shmem,rateLogging=0"
     if [[ $EPNSYNCMODE == 1 ]]; then
       RAWPROXY_CONFIG="--print-input-sizes 1000"
@@ -528,7 +542,7 @@ if [[ -n $INPUT_DETECTOR_LIST ]]; then
     DISABLE_DIGIT_ROOT_INPUT=
     TOF_INPUT=digits
     GPU_INPUT=zsonthefly
-    has_detector TPC && add_W o2-tpc-reco-workflow "--input-type digits --output-type zsraw,disable-writer $DISABLE_MC --pipeline $(get_N tpc-zsEncoder TPC RAW 1 TPCRAWDEC)"
+    has_detector TPC && add_W o2-tpc-reco-workflow "--input-type digits --output-type zsraw,disable-writer $DISABLE_MC $([[ $TPC_CORR_OPT == *--disable-ctp-lumi-request* ]] && echo --disable-ctp-lumi-request) --pipeline $(get_N tpc-zsEncoder TPC RAW 1 TPCRAWDEC)"
     has_detector MID && add_W o2-mid-digits-reader-workflow "$DISABLE_MC" ""
   else
     if [[ $NTIMEFRAMES == -1 ]]; then NTIMEFRAMES_CMD= ; else NTIMEFRAMES_CMD="--max-tf 0 --loop $NTIMEFRAMES"; fi
@@ -544,8 +558,18 @@ if [[ -z ${WORKFLOW_DETECTORS_USE_GLOBAL_READER_TRACKS} ]] && [[ -z ${WORKFLOW_D
 fi
 
 # ---------------------------------------------------------------------------------------------------------------------
-# Raw decoder workflows - disabled in async mode
+
 if [[ $CTFINPUT == 0 && $DIGITINPUT == 0 ]]; then
+# Check if raw TF data dump was requested, RAWTF_DUMPRATE must be in %
+  if [[ ${DPL_RAWTFDUMP:-} == 1 ]]; then
+     [[ -z ${PROXY_INSPEC} ]] && define_raw_inputs
+     CONFIG_RAWTFDUMP="--dataspec \"${PROXY_INSPEC}\" --output-dir \"${RAWTF_DIR:-$CTF_DIR}\" --meta-output-dir \"${EPN2EOS_METAFILES_DIR}\" --max-dump-rate ${RAWTF_DUMPRATE:-0.1} "
+     CONFIG_RAWTFDUMP+=" --min-file-size ${RAWTF_MINSIZE:-$CTF_MINSIZE} --max-tf-per-file ${RAWTF_MAX_PER_FILE:-$CTF_MAX_PER_FILE} --mute-warn-period ${RAWTF_MUTE_PERIOD:-200} --max-warn ${RAWTF_MAX_WARN:-5} "
+     [[ -n ${DPL_RAWTFDUMP_TRIGGER:-} ]] && CONFIG_RAWTFDUMP+=" --triggerspec \"DMPTRG:${DPL_RAWTFDUMP_TRIGGER}\" "
+     add_W o2-raw-tf-dump-workflow "$CONFIG_RAWTFDUMP"
+  fi
+
+# Raw decoder workflows - disabled in async mode
   if has_detector TPC && [[ "${TPC_CONVERT_LINKZS_TO_RAW:-}" == "1" ]]; then
     GPU_INPUT=zsonthefly
     RAWTODIGITOPTIONS=
@@ -553,7 +577,7 @@ if [[ $CTFINPUT == 0 && $DIGITINPUT == 0 ]]; then
       RAWTODIGITOPTIONS+=" --ignore-trigger"
     fi
     add_W o2-tpc-raw-to-digits-workflow "--input-spec \"\" --remove-duplicates $RAWTODIGITOPTIONS --pipeline $(get_N tpc-raw-to-digits-0 TPC RAW 1 TPCRAWDEC)"
-    add_W o2-tpc-reco-workflow "--input-type digitizer --output-type zsraw,disable-writer --pipeline $(get_N tpc-zsEncoder TPC RAW 1 TPCRAWDEC)" "GPU_rec_tpc.zsThreshold=0"
+    add_W o2-tpc-reco-workflow "--input-type digitizer --output-type zsraw,disable-writer $([[ $TPC_CORR_OPT == *--disable-ctp-lumi-request* ]] && echo --disable-ctp-lumi-request) --pipeline $(get_N tpc-zsEncoder TPC RAW 1 TPCRAWDEC)" "GPU_rec_tpc.zsThreshold=0"
   fi
   has_detector ITS && ! has_detector_from_global_reader ITS && add_W o2-itsmft-stf-decoder-workflow "--nthreads ${NITSDECTHREADS} --raw-data-dumps $ALPIDE_ERR_DUMPS $ITS_STAGGERED --pipeline $(get_N its-stf-decoder ITS RAW 1 ITSRAWDEC)" "$ITS_STF_DEC_CONFIG;$ITSMFT_STROBES;VerbosityConfig.rawParserSeverity=warn;"
   has_detector MFT && ! has_detector_from_global_reader MFT && add_W o2-itsmft-stf-decoder-workflow "--nthreads ${NMFTDECTHREADS} --raw-data-dumps $ALPIDE_ERR_DUMPS $MFT_STAGGERED --pipeline $(get_N mft-stf-decoder MFT RAW 1 MFTRAWDEC) --runmft true" "$MFT_STF_DEC_CONFIG;$ITSMFT_STROBES;VerbosityConfig.rawParserSeverity=warn;"
@@ -592,9 +616,9 @@ has_detector_gpu ITS && GPU_OUTPUT+=",its-tracks"
 (has_detector_reco TOF || has_detector_ctf TOF) && ! has_detector_from_global_reader TOF && add_W o2-tof-reco-workflow "$TOF_CONFIG --input-type $TOF_INPUT --output-type $TOF_OUTPUT $DISABLE_DIGIT_ROOT_INPUT $DISABLE_ROOT_OUTPUT $DISABLE_MC --pipeline $(get_N tof-compressed-decoder TOF RAW 1),$(get_N TOFClusterer TOF REST 1)"
 has_detector_reco FT0 && ! has_detector_from_global_reader FT0 && add_W o2-ft0-reco-workflow "$DISABLE_DIGIT_ROOT_INPUT $DISABLE_ROOT_OUTPUT $DISABLE_MC --pipeline $(get_N ft0-reconstructor FT0 REST 1)"
 has_detector_reco TRD && ! has_detector_from_global_reader TRD && add_W o2-trd-tracklet-transformer "--disable-irframe-reader $DISABLE_DIGIT_ROOT_INPUT $DISABLE_ROOT_OUTPUT $DISABLE_MC $TRD_FILTER_CONFIG --pipeline $(get_N TRDTRACKLETTRANSFORMER TRD REST 1 TRDTRKTRANS)"
-has_detectors_reco ITS TPC && ! has_detector_from_global_reader_tracks ITS-TPC && has_detector_matching ITSTPC && add_W o2-tpcits-match-workflow "$DISABLE_ROOT_INPUT $DISABLE_ROOT_OUTPUT $DISABLE_MC $ITS_STAGGERED $SEND_ITSTPC_DTGL $TPC_CORR_OPT --nthreads $ITSTPC_THREADS --pipeline $(get_N itstpc-track-matcher MATCH REST $ITSTPC_THREADS TPCITS)" "$ITSTPC_CONFIG_KEY;$INTERACTION_TAG_CONFIG_KEY;$ITSMFT_STROBES;$ITSEXTRAERR;$TPC_CORR_KEY;"
-has_detector_reco TRD && [[ -n "$TRD_SOURCES" ]] && ! has_detector_from_global_reader_tracks "$(echo "$TRD_SOURCES" | cut -d',' -f1)-TRD" && add_W o2-trd-global-tracking "$DISABLE_ROOT_INPUT $DISABLE_ROOT_OUTPUT $DISABLE_MC $TRD_CONFIG $TRD_FILTER_CONFIG $TPC_CORR_OPT --track-sources $TRD_SOURCES --pipeline $(get_N trd-globaltracking_TPC_ITS-TPC_ TRD REST 1 TRDTRK),$(get_N trd-globaltracking_TPC_FT0_ITS-TPC_ TRD REST 1 TRDTRK),$(get_N trd-globaltracking_TPC_FT0_ITS-TPC_CTP_ TRD REST 1 TRDTRK)" "$TRD_CONFIG_KEY;$INTERACTION_TAG_CONFIG_KEY;$ITSMFT_STROBES;$ITSEXTRAERR;$TPC_CORR_KEY;"
-has_detector_reco TOF && [[ -n "$TOF_SOURCES" ]] && ! has_detector_from_global_reader_tracks "$(echo "$TOF_SOURCES" | cut -d',' -f1)-TOF" && add_W o2-tof-matcher-workflow "$TOF_MATCH_OPT $DISABLE_ROOT_INPUT $DISABLE_ROOT_OUTPUT $DISABLE_MC $TPC_CORR_OPT ${TOFMATCH_THREADS:+--tof-lanes ${TOFMATCH_THREADS}} --track-sources $TOF_SOURCES --pipeline $(get_N tof-matcher TOF REST 1 TOFMATCH)" "$ITSMFT_STROBES;$ITSEXTRAERR;$TPC_CORR_KEY;$INTERACTION_TAG_CONFIG_KEY"
+has_detectors_reco ITS TPC && ! has_detector_from_global_reader_tracks ITS-TPC && has_detector_matching ITSTPC && add_W o2-tpcits-match-workflow "$DISABLE_ROOT_INPUT $DISABLE_ROOT_OUTPUT $DISABLE_MC $ITS_STAGGERED $SEND_ITSTPC_DTGL $TPC_CORR_OPT --nthreads $ITSTPC_THREADS --pipeline $(get_N itstpc-track-matcher MATCH REST $ITSTPC_THREADS TPCITS)" "$ITSTPC_CONFIG_KEY;$INTERACTION_TAG_CONFIG_KEY;$ITSMFT_STROBES;$ITSEXTRAERR;"
+has_detector_reco TRD && [[ -n "$TRD_SOURCES" ]] && ! has_detector_from_global_reader_tracks "$(echo "$TRD_SOURCES" | cut -d',' -f1)-TRD" && add_W o2-trd-global-tracking "$DISABLE_ROOT_INPUT $DISABLE_ROOT_OUTPUT $DISABLE_MC $TRD_CONFIG $TRD_FILTER_CONFIG $TPC_CORR_OPT --track-sources $TRD_SOURCES --pipeline $(get_N trd-globaltracking_TPC_ITS-TPC_ TRD REST 1 TRDTRK),$(get_N trd-globaltracking_TPC_FT0_ITS-TPC_ TRD REST 1 TRDTRK),$(get_N trd-globaltracking_TPC_FT0_ITS-TPC_CTP_ TRD REST 1 TRDTRK)" "$TRD_CONFIG_KEY;$INTERACTION_TAG_CONFIG_KEY;$ITSMFT_STROBES;$ITSEXTRAERR;"
+has_detector_reco TOF && [[ -n "$TOF_SOURCES" ]] && ! has_detector_from_global_reader_tracks "$(echo "$TOF_SOURCES" | cut -d',' -f1)-TOF" && add_W o2-tof-matcher-workflow "$TOF_MATCH_OPT $DISABLE_ROOT_INPUT $DISABLE_ROOT_OUTPUT $DISABLE_MC $TPC_CORR_OPT ${TOFMATCH_THREADS:+--tof-lanes ${TOFMATCH_THREADS}} --track-sources $TOF_SOURCES --pipeline $(get_N tof-matcher TOF REST 1 TOFMATCH)" "$ITSMFT_STROBES;$ITSEXTRAERR;$INTERACTION_TAG_CONFIG_KEY"
 has_detectors TPC && [[ -z "$DISABLE_ROOT_OUTPUT" && "${SKIP_TPC_CLUSTERSTRACKS_OUTPUT:-}" != 1 ]] && ! has_detector_from_global_reader TPC && add_W o2-tpc-reco-workflow "--input-type pass-through --output-type clusters,tpc-triggers,tracks,send-clusters-per-sector $DISABLE_MC"
 
 # ---------------------------------------------------------------------------------------------------------------------

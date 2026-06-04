@@ -34,6 +34,7 @@
 #include "Framework/ServiceRegistryHelpers.h"
 #include "Framework/Signpost.h"
 #include "Framework/DefaultsHelpers.h"
+#include "Framework/ConfigParamsHelper.h"
 
 #include "CommonMessageBackendsHelpers.h"
 #include <Monitoring/Monitoring.h>
@@ -637,6 +638,34 @@ o2::framework::ServiceSpec ArrowSupport::arrowBackendSpec()
         analysisCCDB->outputs.clear();
         analysisCCDB->inputs.clear();
         AnalysisSupportHelpers::addMissingOutputsToBuilder(dec.analysisCCDBInputs, dec.requestedAODs, dec.requestedDYNs, *analysisCCDB);
+        // Register each ccdb: column path as an actual device option on the CCDB
+        // device so it can be read from ConfigParamRegistry at runtime.
+        // If any analysis task declared a Configurable<std::string> with the same
+        // "ccdb:fXxx" name, prefer its default over the compile-time ::query value.
+        // First encountered wins; log a warning if two tasks declare conflicting defaults.
+        for (auto& input : dec.analysisCCDBInputs) {
+          for (auto& m : input.metadata | std::views::filter(checks::has_params_with_name_starting("ccdb:"))) {
+            ConfigParamSpec effective = m; // start with compile-time default
+            bool foundFirst = false;
+            for (auto& d : workflow | views::exclude_by_name(analysisCCDB->name)) {
+              for (auto& opt : d.options) {
+                if (opt.name == m.name) {
+                  if (!foundFirst) {
+                    effective = opt; // first task Configurable wins
+                    foundFirst = true;
+                  } else if (opt.defaultValue.asString() != effective.defaultValue.asString()) {
+                    LOGP(warn, "Task '{}' declares Configurable '{}' = '{}' which conflicts "
+                               "with an earlier value '{}'; earlier value will be used.",
+                         d.name, opt.name, opt.defaultValue.asString(),
+                         effective.defaultValue.asString());
+                  }
+                  break;
+                }
+              }
+            }
+            ConfigParamsHelper::addOptionIfMissing(analysisCCDB->options, effective);
+          }
+        }
         // load real AlgorithmSpec before deployment
         analysisCCDB->algorithm = PluginManager::loadAlgorithmFromPlugin("O2FrameworkCCDBSupport", "AnalysisCCDBFetcherPlugin", ctx);
       }
@@ -682,7 +711,9 @@ o2::framework::ServiceSpec ArrowSupport::arrowBackendSpec()
         // update currently requested AODs
         for (auto& d : workflow) {
           d.inputs |
-            views::partial_match_filter(AODOrigins) |
+            std::ranges::views::filter([](InputSpec const& input) {
+              return DataSpecUtils::partialMatch(input, AODOrigins) || std::ranges::any_of(input.metadata, checks::has_params_with_name_starting("aod-origin-replaced"));
+            }) |
             sinks::update_input_list{dec.requestedAODs};
         }
 
@@ -736,12 +767,13 @@ o2::framework::ServiceSpec ArrowSupport::arrowTableSlicingCacheSpec()
     .uniqueId = CommonServices::simpleServiceId<ArrowTableSlicingCache>(),
     .init = [](ServiceRegistryRef services, DeviceState&, fair::mq::ProgOptions&) { return ServiceHandle{TypeIdHelpers::uniqueId<ArrowTableSlicingCache>(),
                                                                                                          new ArrowTableSlicingCache(Cache{services.get<ArrowTableSlicingCacheDef>().bindingsKeys},
-                                                                                                                                    Cache{services.get<ArrowTableSlicingCacheDef>().bindingsKeysUnsorted}),
+                                                                                                                                    Cache{services.get<ArrowTableSlicingCacheDef>().bindingsKeysUnsorted},
+                                                                                                                                    services.get<ArrowTableSlicingCacheDef>().newOrigin),
                                                                                                          ServiceKind::Stream, typeid(ArrowTableSlicingCache).name()}; },
     .configure = CommonServices::noConfiguration(),
     .preProcessing = [](ProcessingContext& pc, void* service_ptr) {
       auto* service = static_cast<ArrowTableSlicingCache*>(service_ptr);
-      auto& caches = service->bindingsKeys;
+      auto const& caches = service->bindingsKeys;
       for (auto i = 0u; i < caches.size(); ++i) {
         if (caches[i].enabled && pc.inputs().getPos(caches[i].binding.c_str()) >= 0) {
           auto status = service->updateCacheEntry(i, pc.inputs().get<TableConsumer>(caches[i].matcher)->asArrowTable());
@@ -750,7 +782,7 @@ o2::framework::ServiceSpec ArrowSupport::arrowTableSlicingCacheSpec()
           }
         }
       }
-      auto& unsortedCaches = service->bindingsKeysUnsorted;
+      auto const& unsortedCaches = service->bindingsKeysUnsorted;
       for (auto i = 0u; i < unsortedCaches.size(); ++i) {
         if (unsortedCaches[i].enabled && pc.inputs().getPos(unsortedCaches[i].binding.c_str()) >= 0) {
           auto status = service->updateCacheEntryUnsorted(i, pc.inputs().get<TableConsumer>(unsortedCaches[i].matcher)->asArrowTable());

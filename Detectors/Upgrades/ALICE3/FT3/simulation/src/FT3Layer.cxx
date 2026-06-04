@@ -233,17 +233,21 @@ void FT3Layer::createReferenceCircles(TGeoVolume* motherVolume, const std::strin
   // create reference circles at the inner and outer radius of the layer, for visualization purposes
   TGeoTube* innerCircle = new TGeoTube(mInnerRadius - 0.1, mInnerRadius + 0.1, 0.01);
   TGeoTube* outerCircle = new TGeoTube(mOuterRadius - 0.1, mOuterRadius + 0.1, 0.01);
+  TGeoTube* outerCircleEdge = new TGeoTube(mOuterRadius + 3.3, mOuterRadius + 3.5, 0.01);
 
   TGeoVolume* innerCircleVol = new TGeoVolume((mLayerName + "_InnerCircle").c_str(), innerCircle, gGeoManager->GetMedium("FT3_AIR$"));
   TGeoVolume* outerCircleVol = new TGeoVolume((mLayerName + "_OuterCircle").c_str(), outerCircle, gGeoManager->GetMedium("FT3_AIR$"));
+  TGeoVolume* outerCircleEdgeVol = new TGeoVolume((mLayerName + "_OuterCircleEdge").c_str(), outerCircleEdge, gGeoManager->GetMedium("FT3_AIR$"));
 
   innerCircleVol->SetLineColor(kRed);
   outerCircleVol->SetLineColor(kBlue);
+  outerCircleEdgeVol->SetLineColor(kBlack);
 
   double z_position = mDirection ? 0.5 : -0.5;
 
   motherVolume->AddNode(innerCircleVol, 1, new TGeoTranslation(0, 0, z_position));
   motherVolume->AddNode(outerCircleVol, 1, new TGeoTranslation(0, 0, z_position));
+  motherVolume->AddNode(outerCircleEdgeVol, 1, new TGeoTranslation(0, 0, z_position));
 }
 
 void FT3Layer::createLayer(TGeoVolume* motherVolume)
@@ -428,7 +432,7 @@ void FT3Layer::createLayer(TGeoVolume* motherVolume)
     // need to shift outwards always, so + forwards and - backwards
     auto* FwdDiskCombiTrans = new TGeoCombiTrans(0, 0, mZ + 0, FwdDiskRotation);
 
-    LOG(info) << "Inserting " << layerVol->GetName() << " inside " << motherVolume->GetName();
+    LOG(info) << "Inserting " << layerVol->GetName() << " (Rmin=" << mInnerRadius << ", Rmax=" << mOuterRadius << ", z=" << mZ << "cm) inside " << motherVolume->GetName();
     motherVolume->AddNode(layerVol, 1, FwdDiskCombiTrans);
   } else if (ft3Params.layoutFT3 == kSegmentedStave ||
              ft3Params.layoutFT3 == kSegmentedStaveOTOnly) {
@@ -459,7 +463,9 @@ void FT3Layer::createLayer(TGeoVolume* motherVolume)
 
     // shift stave volumes into layer volume, since nominal z_{stave face} = 0
     double z_local_offset = z_layer_thickness / 2.0;
-    TGeoTube* layer = new TGeoTube(mInnerRadius - 12, mOuterRadius + 5, z_layer_thickness / 2);
+    // ensure staves fully encapsulated in the layer volume,
+    // but don't cross out of max nominal radii of 38.5cm & 71.5cm respectively (3.5cm tolerance)
+    TGeoTube* layer = new TGeoTube(mInnerRadius - 0.2, mOuterRadius + 3.49, z_layer_thickness / 2);
     layerVol = new TGeoVolume(mLayerName.c_str(), layer, medAir);
 
     if (ft3Params.drawReferenceCircles) {
@@ -476,7 +482,8 @@ void FT3Layer::createLayer(TGeoVolume* motherVolume)
     double z_offset_directional = mDirection ? z_local_offset : -z_local_offset;
     auto* FwdDiskCombiTrans = new TGeoCombiTrans(0, 0, mZ + z_offset_directional, FwdDiskRotation);
 
-    LOG(info) << "Inserting " << layerVol->GetName() << " inside " << motherVolume->GetName();
+    LOG(info) << "Inserting " << layerVol->GetName() << " (Rmin=" << mInnerRadius << ", Rmax=" << mOuterRadius << ", z=" << mZ << "cm, segmented disk with staves) inside " << motherVolume->GetName();
+
     motherVolume->AddNode(layerVol, 1, FwdDiskCombiTrans);
   } else {
     LOG(fatal) << "Unknown FT3 layout option: " << static_cast<int>(ft3Params.layoutFT3);

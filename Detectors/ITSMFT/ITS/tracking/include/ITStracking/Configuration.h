@@ -23,19 +23,39 @@
 #include <vector>
 #endif
 
+#include "CommonUtils/EnumFlags.h"
 #include "DetectorsBase/Propagator.h"
 #include "ITStracking/Constants.h"
+#include "ITStracking/LayerMask.h"
 
 namespace o2::its
 {
 
+// Steering of dedicated steps in an iteration
+enum class IterationStep : uint8_t {
+  FirstPass = 0,
+  RebuildClusterLUT,
+  UseUPCMask,
+  SelectUPCVertices,
+  ResetVertices,
+  SkipROFsAboveThreshold,
+  MarkVerticesAsUPC,
+};
+using IterationSteps = o2::utils::EnumFlags<IterationStep>;
+
 struct TrackingParameters {
-  int CellMinimumLevel() const noexcept { return MinTrackLength - constants::ClustersPerCell + 1; }
+  int CellMinimumLevel() const noexcept
+  {
+    const int minClusters = MinTrackLength - (MaxHoles > 0 ? MaxHoles : 0);
+    const int effectiveMinClusters = minClusters > constants::ClustersPerCell ? minClusters : constants::ClustersPerCell;
+    return effectiveMinClusters - constants::ClustersPerCell + 1;
+  }
   int NeighboursPerRoad() const noexcept { return NLayers - 3; }
   int CellsPerRoad() const noexcept { return NLayers - 2; }
   int TrackletsPerRoad() const noexcept { return NLayers - 1; }
   std::string asString() const;
 
+  IterationSteps PassFlags{IterationStep::FirstPass, IterationStep::RebuildClusterLUT};
   int NLayers = 7;
   std::vector<uint32_t> AddTimeError = {0, 0, 0, 0, 0, 0, 0};
   std::vector<float> LayerZ = {16.333f + 1, 16.333f + 1, 16.333f + 1, 42.140f + 1, 42.140f + 1, 73.745f + 1, 73.745f + 1};
@@ -51,9 +71,9 @@ struct TrackingParameters {
   float DiamondCov[6] = {25.e-6f, 0.f, 0.f, 25.e-6f, 0.f, 36.f};
 
   /// General parameters
-  bool AllowSharingFirstCluster = false;
-  int ClusterSharing = 0;
   int MinTrackLength = 7;
+  int MaxHoles = 0;
+  LayerMask HoleLayerMask = 0;
   float NSigmaCut = 5;
   float PVres = 1.e-2f;
   /// Trackleting cuts
@@ -66,24 +86,30 @@ struct TrackingParameters {
   float MaxChi2NDF = 30.f;
   int ReseedIfShorter = 6; // reseed for the final fit track with the length shorter than this
   std::vector<float> MinPt = {0.f, 0.f, 0.f, 0.f};
-  uint16_t StartLayerMask = 0x7F;
+  LayerMask StartLayerMask = 0x7F;
   bool RepeatRefitOut = false;   // repeat outward refit using inward refit as a seed
   bool ShiftRefToCluster = true; // TrackFit: after update shift the linearization reference to cluster
   bool PerPrimaryVertexProcessing = false;
   bool SaveTimeBenchmarks = false;
   bool DoUPCIteration = false;
   bool FataliseUponFailure = true;
-
-  bool createArtefactLabels{false};
-
+  bool CreateArtefactLabels{false};
   bool PrintMemory = false; // print allocator usage in epilog report
   size_t MaxMemory = std::numeric_limits<size_t>::max();
   bool DropTFUponFailure = false;
+
+  // Selections on tracks sharing clusters
+  bool AllowSharingFirstCluster = false;
+  float SharedClusterMaxDeltaPhi = 0.05f; // For tracks sharing clusters, maximum allowed delta phi at the cluster position
+  float SharedClusterMaxDeltaEta = 0.03f; // For tracks sharing clusters, maximum allowed delta eta at the cluster position
+  bool SharedClusterOppositeSign = false; // For tracks sharing clusters, require opposite sign of the tracklets
+  int SharedMaxClusters = 0;              // Maximal allowed shared clusters (excluding first cluster)
 };
 
 struct VertexingParameters {
   std::string asString() const;
 
+  IterationSteps PassFlags{IterationStep::FirstPass, IterationStep::ResetVertices};
   std::vector<float> LayerZ = {16.333f + 1, 16.333f + 1, 16.333f + 1, 42.140f + 1, 42.140f + 1, 73.745f + 1, 73.745f + 1};
   std::vector<float> LayerRadii = {2.33959f, 3.14076f, 3.91924f, 19.6213f, 24.5597f, 34.388f, 39.3329f};
   int vertPerRofThreshold = 0; // Maximum number of vertices per ROF to trigger second a round

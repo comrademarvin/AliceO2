@@ -1,4 +1,4 @@
-// Copyright 2019-2026 CERN and copyright holders of ALICE O2.
+// Copyright 2019-2020 CERN and copyright holders of ALICE O2.
 // See https://alice-o2.web.cern.ch/copyright for details of the copyright holders.
 // All rights not expressly granted are reserved.
 //
@@ -8,6 +8,18 @@
 // In applying this license CERN does not waive the privileges and immunities
 // granted to it by virtue of its status as an Intergovernmental Organization
 // or submit itself to any jurisdiction.
+///
+/// \file TimeFrame.cxx
+/// \brief Explicit instantiation of TimeFrameMixin and TimeFrame for the
+///        ITS CPU base. Shared method bodies live in TimeFrameMixin.h.
+///
 
-// FIXME: temporary shim to no not break O2Physics
-#include "DataFormatsITSMFT/DPLAlpideParam.h"
+#include "ALICE3GlobalReconstruction/TimeFrame.h"
+
+namespace o2::trk
+{
+
+template class TimeFrameMixin<11, o2::its::TimeFrame<11>>;
+template class TimeFrame<11>;
+
+} // namespace o2::trk

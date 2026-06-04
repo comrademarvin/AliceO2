@@ -200,28 +200,47 @@ void Detector::defineSensitiveVolumes()
   TGeoManager* geoManager = gGeoManager;
   TGeoVolume* v;
 
-  // The names of the IOTOF sensitive volumes have the format: IOTOFLayer(0...mLayers.size()-1)
   auto& iotofPars = IOTOFBaseParam::Instance();
-  if (iotofPars.enableInnerTOF) {
+  const bool itof = iotofPars.enableInnerTOF;
+  const bool otof = iotofPars.enableOuterTOF;
+  bool ftof = iotofPars.enableForwardTOF;
+  bool btof = iotofPars.enableBackwardTOF;
+  const std::string pattern = iotofPars.detectorPattern;
+  if (pattern == "") {
+    LOG(info) << "Default pattern";
+  } else if (pattern == "v3b") {
+    ftof = false;
+    btof = false;
+  } else if (pattern == "v3b1a") {
+  } else if (pattern == "v3b1b") {
+  } else if (pattern == "v3b2a") {
+  } else if (pattern == "v3b2b") {
+  } else if (pattern == "v3b3") {
+  } else {
+    LOG(fatal) << "IOTOF layer pattern " << pattern << " not recognized, exiting";
+  }
+
+  // The names of the IOTOF sensitive volumes have the format: IOTOFLayer(0...mLayers.size()-1)
+  if (itof) {
     for (const std::string& itofSensor : ITOFLayer::mRegister) {
       v = geoManager->GetVolume(itofSensor.c_str());
       LOGP(info, "Adding IOTOF Sensitive Volume {}", v->GetName());
       AddSensitiveVolume(v);
     }
   }
-  if (iotofPars.enableOuterTOF) {
+  if (otof) {
     for (const std::string& otofSensor : OTOFLayer::mRegister) {
       v = geoManager->GetVolume(otofSensor.c_str());
       LOGP(info, "Adding IOTOF Sensitive Volume {}", v->GetName());
       AddSensitiveVolume(v);
     }
   }
-  if (iotofPars.enableForwardTOF) {
+  if (ftof) {
     v = geoManager->GetVolume(GeometryTGeo::getFTOFSensorPattern());
     LOGP(info, "Adding IOTOF Sensitive Volume {}", v->GetName());
     AddSensitiveVolume(v);
   }
-  if (iotofPars.enableBackwardTOF) {
+  if (btof) {
     v = geoManager->GetVolume(GeometryTGeo::getBTOFSensorPattern());
     LOGP(info, "Adding IOTOF Sensitive Volume {}", v->GetName());
     AddSensitiveVolume(v);
@@ -314,13 +333,29 @@ bool Detector::ProcessHits(FairVolume* vol)
     TLorentzVector positionStop;
     fMC->TrackPosition(positionStop);
     // Retrieve the indices with the volume path
-    int stave(0), halfstave(0), chipinmodule(0), module;
+    int stave(0), chipinmodule(0), module(0);
     fMC->CurrentVolOffID(1, chipinmodule);
     fMC->CurrentVolOffID(2, module);
-    fMC->CurrentVolOffID(3, halfstave);
-    fMC->CurrentVolOffID(4, stave);
+    fMC->CurrentVolOffID(3, stave);
 
-    o2::itsmft::Hit* p = addHit(stack->GetCurrentTrackNumber(), lay, mTrackData.mPositionStart.Vect(), positionStop.Vect(),
+    int sensorID = lay;
+    auto& iotofPars = IOTOFBaseParam::Instance();
+
+    int layN = -1;
+    if (strstr(vol->GetName(), GeometryTGeo::getITOFSensorPattern()) != nullptr) {
+      layN = 0;
+    } else if (strstr(vol->GetName(), GeometryTGeo::getOTOFSensorPattern())) {
+      layN = 1;
+    }
+    if (iotofPars.segmentedInnerTOF && iotofPars.segmentedOuterTOF) {
+      if (layN > -1) {
+        sensorID = mGeometryTGeo->getIOTOFChipIndex(layN, stave, module, chipinmodule);
+      } else {
+        sensorID += (mGeometryTGeo->getSize() - 1); // temporary as f/b tof is not yet segmented
+      }
+    }
+
+    o2::itsmft::Hit* p = addHit(stack->GetCurrentTrackNumber(), sensorID, mTrackData.mPositionStart.Vect(), positionStop.Vect(),
                                 mTrackData.mMomentumStart.Vect(), mTrackData.mMomentumStart.E(), positionStop.T(),
                                 mTrackData.mEnergyLoss, mTrackData.mTrkStatusStart, status);
 

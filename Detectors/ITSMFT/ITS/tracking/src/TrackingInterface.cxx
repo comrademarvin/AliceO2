@@ -50,9 +50,16 @@ void ITSTrackingInterface::initialise()
   }
   auto trackParams = TrackingMode::getTrackingParameters(mMode);
   auto vertParams = TrackingMode::getVertexingParameters(mMode);
+  overrideParameters(trackParams, vertParams);
   LOGP(info, "Initializing tracker in {} phase reconstruction with {} passes for tracking and {}/{} for vertexing", TrackingMode::toString(mMode), trackParams.size(), o2::its::VertexerParamConfig::Instance().nIterations, vertParams.size());
   mTracker->setParameters(trackParams);
   mVertexer->setParameters(vertParams);
+  TrackingParameters vertexTrackingParams;
+  mTimeFrame->initVertexingTopology(vertexTrackingParams);
+  if (!trackParams.empty()) {
+    mTimeFrame->initDefaultTrackingTopology(trackParams[0], NLayers);
+    mTimeFrame->initTrackerTopologies(gsl::span<const TrackingParameters>(trackParams.data(), trackParams.size()));
+  }
 
   if (mMode == TrackingMode::Cosmics) {
     mRunVertexer = false;
@@ -239,8 +246,10 @@ void ITSTrackingInterface::run(framework::ProcessingContext& pc)
         if (!vtxSpan.empty()) {
           bool hasUPC = std::any_of(vtxSpan.begin(), vtxSpan.end(), [](const auto& v) { return v.isFlagSet(Vertex::UPCMode); });
           if (hasUPC) { // at least one vertex in this ROF and it is from second vertex iteration
-            LOGP(debug, "ROF {} rejected as vertices are from the UPC iteration", iRof);
-            processUPCMask.selectROF({clockTiming.getROFStartInBC(iRof), clockTiming.getROFEndInBC(iRof)});
+            LOGP(debug, "ROF {} accepted as vertices are from the UPC iteration", iRof);
+            const auto startBC = clockTiming.getROFStartInBC(iRof);
+            const auto endBC = clockTiming.getROFEndInBC(iRof);
+            processUPCMask.selectROF({startBC, endBC - startBC});
             vtxROF.setFlag(o2::itsmft::ROFRecord::VtxUPCMode);
           } else { // in all cases except if as standard mode vertex was found, the ROF was processed with UPC settings
             vtxROF.setFlag(o2::itsmft::ROFRecord::VtxStdMode);
@@ -372,7 +381,7 @@ void ITSTrackingInterface::updateTimeDependentParams(framework::ProcessingContex
   }
   if (!initOnceDone) { // this params need to be queried only once
     initOnceDone = true;
-    pc.inputs().get<o2::itsmft::TopologyDictionary*>("itscldict"); // just to trigger the finaliseCCDB
+    requestTopologyDictionary(pc);
     pc.inputs().get<o2::itsmft::DPLAlpideParam<o2::detectors::DetID::ITS>*>("itsalppar");
     if (pc.inputs().getPos("itsTGeo") >= 0) {
       pc.inputs().get<o2::its::GeometryTGeo*>("itsTGeo");
@@ -483,6 +492,11 @@ void ITSTrackingInterface::setTraitsFromProvider(VertexerTraitsN* vertexerTraits
   mTimeFrame->setMemoryPool(mMemoryPool);
   mTracker->setMemoryPool(mMemoryPool);
   mVertexer->setMemoryPool(mMemoryPool);
+}
+
+void ITSTrackingInterface::requestTopologyDictionary(framework::ProcessingContext& pc)
+{
+  pc.inputs().get<o2::itsmft::TopologyDictionary*>("itscldict"); // just to trigger the finaliseCCDB
 }
 
 void ITSTrackingInterface::loadROF(gsl::span<const itsmft::ROFRecord>& trackROFspan,
